@@ -364,8 +364,8 @@ const eventNames: Record<string, string> = {
   view_cart: 'Visualização da lista de orçamento',
   select_footer: 'Seleção no rodapé',
   select_promotion: 'Seleção de promoção',
-  begin_checkout: 'Início da finalização (a revisar)',
-  purchase: 'Finalização registrada (a validar)',
+  begin_checkout: 'Início da finalização',
+  purchase: 'Finalização registrada',
   remove_from_cart: 'Remoção da lista de orçamento',
   add_to_wishlist: 'Adição aos favoritos',
 };
@@ -1167,11 +1167,11 @@ export default function Home() {
         ['Adição para orçamento', 'add_to_cart'],
         ['Visualização do carrinho', 'view_cart'],
         [
-          'Início do checkout (a revisar)',
+          'Início do checkout',
           'begin_checkout',
         ],
         [
-          'Finalização registrada (a validar)',
+          'Finalização registrada',
           'purchase',
         ],
       ];
