@@ -19,7 +19,6 @@ import {
   ArrowDownUp,
   LoaderCircle,
 } from 'lucide-react';
-
 import * as snapshot from '@/lib/snapshot';
 
 type Page = {
@@ -28,9 +27,11 @@ type Page = {
 };
 
 type Product = {
+  itemId?: string;
   name: string;
   views: number;
   quoteAdds: number;
+  aliases?: string[];
 };
 
 type Event = {
@@ -94,12 +95,36 @@ const pct = (n: number) =>
   }).format(n);
 
 const nav = [
-  { id: 'overview', label: 'Visão geral', icon: LayoutDashboard },
-  { id: 'acquisition', label: 'Aquisição', icon: ChartNoAxesCombined },
-  { id: 'site', label: 'Mapa do site', icon: Network },
-  { id: 'products', label: 'Produtos', icon: Armchair },
-  { id: 'funnel', label: 'Funil de orçamento', icon: ShoppingBag },
-  { id: 'events', label: 'Eventos', icon: Activity },
+  {
+    id: 'overview',
+    label: 'Visão geral',
+    icon: LayoutDashboard,
+  },
+  {
+    id: 'acquisition',
+    label: 'Origem dos visitantes',
+    icon: ChartNoAxesCombined,
+  },
+  {
+    id: 'site',
+    label: 'Mapa do site',
+    icon: Network,
+  },
+  {
+    id: 'products',
+    label: 'Produtos',
+    icon: Armchair,
+  },
+  {
+    id: 'funnel',
+    label: 'Funil de orçamento',
+    icon: ShoppingBag,
+  },
+  {
+    id: 'events',
+    label: 'Eventos',
+    icon: Activity,
+  },
   {
     id: 'audience',
     label: 'Público e dispositivos',
@@ -162,13 +187,15 @@ function Bars({
 
   return (
     <div className="bars">
-      {top.map((x) => (
-        <div className="barrow" key={x.name}>
+      {top.map((x, index) => (
+        <div className="barrow" key={`${x.name}-${index}`}>
           <span title={x.name}>{x.name}</span>
           <div className="bartrack">
             <div
               className="barfill berry"
-              style={{ width: `${(x.value / max) * 100}%` }}
+              style={{
+                width: `${(x.value / max) * 100}%`,
+              }}
             />
           </div>
           <b>{fmt(x.value)}</b>
@@ -214,7 +241,6 @@ function csv(
 
 // Rotas que não pertencem à navegação PT-BR.
 // URLs de produtos /:slug/p são preservadas.
-
 const excludedRoots = new Set([
   'zona-interior',
   'zona-exterior',
@@ -278,16 +304,18 @@ function isPtPath(path: string) {
   return true;
 }
 
+// Traduções amigáveis dos canais do GA4.
 const channelNames: Record<string, string> = {
-  'Organic Search': 'Busca orgânica',
-  'Paid Search': 'Busca paga',
+  'Organic Search': 'Pesquisa orgânica',
+  'Paid Search': 'Pesquisa paga',
   Direct: 'Acesso direto',
   'Organic Social': 'Redes sociais (orgânico)',
   'Paid Social': 'Redes sociais (anúncios)',
-  Referral: 'Sites de referência',
+  Referral: 'Links de outros sites',
   Email: 'E-mail',
   'Cross-network': 'Campanhas em várias redes',
-  Unassigned: 'Não classificado',
+  Unassigned: 'Canal não classificado',
+  '(not set)': 'Origem não identificada',
   'AI Assistant': 'Assistentes de inteligência artificial',
   Display: 'Anúncios gráficos',
   'Paid Other': 'Outros anúncios',
@@ -351,8 +379,15 @@ const translatedDevice = (name: string) =>
 const translatedEvent = (name: string) =>
   eventNames[name] || name.replaceAll('_', ' ');
 
-// Consolida segmentos consecutivos duplicados.
+const translatedLanding = (path: string) => {
+  if (!path || path === '(not set)') {
+    return 'Página de entrada não identificada';
+  }
 
+  return path;
+};
+
+// Consolida segmentos consecutivos duplicados.
 function canonicalPath(path: string) {
   const clean = path.split('?')[0];
   const parts = clean.split('/').filter(Boolean);
@@ -539,9 +574,9 @@ export default function Home() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<'views' | 'quoteAdds'>(
-    'views',
-  );
+  const [sort, setSort] = useState<
+    'views' | 'quoteAdds'
+  >('views');
   const [menu, setMenu] = useState(false);
   const [showRawPaths, setShowRawPaths] = useState(false);
 
@@ -557,8 +592,13 @@ export default function Home() {
     setError('');
 
     try {
+      const params = new URLSearchParams({
+        start: from,
+        end: to,
+      });
+
       const res = await fetch(
-        `/api/ga4?start=${from}&end=${to}`,
+        `/api/ga4?${params.toString()}`,
         { cache: 'no-store' },
       );
 
@@ -610,7 +650,12 @@ export default function Home() {
   const sitePages = useMemo(
     () =>
       showRawPaths
-        ? data.pages.filter((p) => isPtPath(p.path))
+        ? data.pages.filter(
+            (p) =>
+              p.path &&
+              p.path !== '(not set)' &&
+              isPtPath(p.path),
+          )
         : canonicalPages(data.pages),
     [data.pages, showRawPaths],
   );
@@ -626,9 +671,17 @@ export default function Home() {
   const products = useMemo(
     () =>
       data.products
-        .filter((x) =>
-          x.name.toLowerCase().includes(q.toLowerCase()),
-        )
+        .filter((x) => {
+          const search = q.toLowerCase();
+
+          return (
+            x.name.toLowerCase().includes(search) ||
+            x.itemId?.toLowerCase().includes(search) ||
+            x.aliases?.some((alias) =>
+              alias.toLowerCase().includes(search),
+            )
+          );
+        })
         .sort((a, b) => b[sort] - a[sort]),
     [data.products, q, sort],
   );
@@ -640,6 +693,31 @@ export default function Home() {
 
   const siteComplete = data.source === 'ga4-live';
   const current = nav.find((n) => n.id === tab)!;
+
+  // Canais exibidos com nomes amigáveis.
+  // Os números originais do GA4 são preservados.
+  const friendlyChannels = useMemo(
+    () =>
+      data.channels.map((x) => ({
+        name: translatedChannel(x.name),
+        value: x.sessions,
+      })),
+    [data.channels],
+  );
+
+  const friendlyLandings = useMemo(
+    () =>
+      data.landings.map((x) => ({
+        name: translatedLanding(x.path),
+        value: x.sessions,
+      })),
+    [data.landings],
+  );
+
+  const channelSessions = (...names: string[]) =>
+    data.channels
+      .filter((x) => names.includes(x.name))
+      .reduce((sum, x) => sum + x.sessions, 0);
 
   const table = (
     headers: string[],
@@ -654,6 +732,7 @@ export default function Home() {
             ))}
           </tr>
         </thead>
+
         <tbody>
           {rows.map((r, i) => (
             <tr key={i}>
@@ -699,13 +778,11 @@ export default function Home() {
           </div>
 
           <div className="two">
-            <Section title="Canais de aquisição">
-              <Bars
-                items={data.channels.map((x) => ({
-                  name: translatedChannel(x.name),
-                  value: x.sessions,
-                }))}
-              />
+            <Section
+              title="De onde vêm os visitantes?"
+              subtitle="Sessões agrupadas pelo canal de origem."
+            >
+              <Bars items={friendlyChannels} />
             </Section>
 
             <Section
@@ -735,7 +812,9 @@ export default function Home() {
             </div>
 
             <div className="mini">
-              <span title="Percentual de sessões engajadas no Google Analytics 4">
+              <span
+                title="Percentual de sessões engajadas no Google Analytics 4"
+              >
                 Taxa de engajamento
               </span>
 
@@ -752,8 +831,9 @@ export default function Home() {
                   color: '#777',
                 }}
               >
-                mais de 10 segundos de retenção,
-                2 ou mais páginas/telas.
+                Sessões com mais de 10 segundos,
+                2 ou mais páginas/telas ou um
+                evento principal.
               </small>
             </div>
           </div>
@@ -770,7 +850,7 @@ export default function Home() {
               value={sitePages.length}
               detail={
                 siteComplete
-                  ? 'Todos os caminhos retornados pelo GA4'
+                  ? 'Caminhos retornados pelo GA4 após os filtros do mapa'
                   : 'Amostra histórica: para todas as URLs, configure o acesso ao GA4'
               }
             />
@@ -778,7 +858,7 @@ export default function Home() {
             <Card
               label="Visualizações de páginas"
               value={data.overview.pageViews}
-              detail="Quantidade de carregamentos de páginas, incluindo repetições."
+              detail="Total do GA4, incluindo caminhos ocultados pelos filtros do mapa."
             />
 
             <Card
@@ -905,60 +985,62 @@ export default function Home() {
             <Card
               label="Sessões"
               value={data.overview.sessions}
-              detail="Visitas iniciadas ao site; uma pessoa pode gerar várias sessões."
+              detail="Total de visitas iniciadas no período."
             />
 
             <Card
-              label="Busca orgânica"
-              value={
-                data.channels.find((x) =>
-                  /Organic Search|Busca orgânica/.test(
-                    x.name,
-                  ),
-                )?.sessions || 0
-              }
+              label="Pesquisa orgânica"
+              value={channelSessions(
+                'Organic Search',
+                'Busca orgânica',
+              )}
+              detail="Visitas provenientes de resultados não pagos de buscadores."
             />
 
             <Card
-              label="Direto"
-              value={
-                data.channels.find((x) =>
-                  /Direct|Direto/.test(x.name),
-                )?.sessions || 0
-              }
+              label="Acesso direto"
+              value={channelSessions(
+                'Direct',
+                'Acesso direto',
+              )}
+              detail="Visitas classificadas pelo GA4 como acesso direto."
             />
 
             <Card
-              label="Não atribuído"
-              value={
-                data.channels.find((x) =>
-                  /Unassigned|Não atribuído/.test(
-                    x.name,
-                  ),
-                )?.sessions || 0
-              }
+              label="Origem não identificada"
+              value={channelSessions(
+                '(not set)',
+                'Origem não identificada',
+              )}
+              detail="Sessões sem valor de canal informado pelo GA4."
             />
           </div>
 
           <div className="two">
-            <Section title="Canais de aquisição">
-              <Bars
-                items={data.channels.map((x) => ({
-                  name: translatedChannel(x.name),
-                  value: x.sessions,
-                }))}
-              />
+            <Section
+              title="De onde vêm os visitantes?"
+              subtitle="Sessões por canal. Quando a origem não é identificada, o GA4 não disponibilizou essa informação."
+            >
+              <Bars items={friendlyChannels} />
             </Section>
 
-            <Section title="Páginas de entrada">
-              <Bars
-                items={data.landings.map((x) => ({
-                  name: x.path,
-                  value: x.sessions,
-                }))}
-              />
+            <Section
+              title="Por quais páginas os visitantes chegam?"
+              subtitle="Página em que a sessão começou. Caminhos não identificados permanecem contabilizados."
+            >
+              <Bars items={friendlyLandings} />
             </Section>
           </div>
+
+          <p className="footnote">
+            Os canais representam a classificação
+            de aquisição de sessões do Google Analytics 4.
+            “Canal não classificado” e
+            “Origem não identificada” são situações
+            distintas e permanecem contabilizadas.
+            Os nomes foram traduzidos apenas para
+            facilitar a leitura do relatório.
+          </p>
         </>
       );
     }
@@ -992,7 +1074,7 @@ export default function Home() {
             title="Ranking de produtos"
             subtitle={
               siteComplete
-                ? 'Todos os itens retornados pelo GA4 no período'
+                ? 'Itens retornados pelo GA4 no período, consolidados pela API'
                 : 'Amostra inicial de produtos'
             }
             right={
@@ -1002,7 +1084,10 @@ export default function Home() {
                   csv(
                     'breton-produtos.csv',
                     products.map((x) => ({
+                      item_id: x.itemId || '',
                       produto: x.name,
+                      nomes_alternativos:
+                        x.aliases?.join(' | ') || '',
                       visualizacoes: x.views,
                       adicoes_orcamento: x.quoteAdds,
                     })),
@@ -1064,9 +1149,12 @@ export default function Home() {
               * Razão entre contagens de eventos,
               não conversão de pessoas. Quando há zero
               visualizações, a razão não pode ser calculada.
-              Adições sem visualizações podem indicar ações
-              em listagens ou diferenças no rastreamento
-              dos eventos view_item e add_to_cart.
+              Adições sem visualizações podem indicar
+              diferenças no rastreamento dos eventos
+              view_item e add_to_cart.
+              Produtos com nomes alternativos associados
+              ao mesmo identificador são consolidados
+              pela API do Breton BI.
             </p>
           </Section>
         </>
@@ -1078,8 +1166,14 @@ export default function Home() {
         ['Visualização de produto', 'view_item'],
         ['Adição para orçamento', 'add_to_cart'],
         ['Visualização do carrinho', 'view_cart'],
-        ['Início do checkout (a revisar)', 'begin_checkout'],
-        ['Finalização registrada (a validar)', 'purchase'],
+        [
+          'Início do checkout (a revisar)',
+          'begin_checkout',
+        ],
+        [
+          'Finalização registrada (a validar)',
+          'purchase',
+        ],
       ];
 
       return (
@@ -1164,7 +1258,9 @@ export default function Home() {
                 O botão “Solicitar orçamento” dispara
                 o evento add_to_cart, mas isso não
                 comprova o envio de um orçamento.
+
                 <strong> A revisar: </strong>
+
                 begin_checkout indica o início de uma
                 etapa de finalização registrada no GA4,
                 enquanto purchase indica uma finalização
@@ -1355,6 +1451,7 @@ export default function Home() {
           <button
             className="mobile-menu"
             onClick={() => setMenu(!menu)}
+            aria-label="Abrir menu"
           >
             <Menu size={21} />
           </button>
@@ -1388,8 +1485,8 @@ export default function Home() {
               <h1>{current.label}</h1>
 
               <p>
-                Propriedade GA4 494454950 ·
-                dados de acordo com o período selecionado
+                Propriedade GA4 494454950 · dados
+                de acordo com o período selecionado
               </p>
             </div>
           </div>
@@ -1405,7 +1502,7 @@ export default function Home() {
             <CalendarDays size={17} />
 
             <label>
-              De{' '}
+              De
               <input
                 aria-label="Data inicial"
                 type="date"
@@ -1418,7 +1515,7 @@ export default function Home() {
             </label>
 
             <label>
-              Até{' '}
+              Até
               <input
                 aria-label="Data final"
                 type="date"
@@ -1443,7 +1540,6 @@ export default function Home() {
           {!loading && error && (
             <div className="note">
               <Info size={17} />
-
               <span>{error}</span>
             </div>
           )}
@@ -1493,19 +1589,23 @@ export default function Home() {
           ) : data.source === 'unavailable' ? (
             <Section
               title="Sem dados para este período"
-              subtitle="Não foi possível consultar os dados do GA4."
+              subtitle="Configure as credenciais de leitura do GA4 no servidor para consultar as datas selecionadas."
             >
               <p>
-                Verifique as credenciais de leitura
-                do GA4 no servidor e as permissões
-                da conta de serviço.
+                Para consultar qualquer período,
+                configure o acesso à propriedade GA4.
+                A chave JSON de uma conta de serviço
+                deve ficar em <code>.env.local</code>,
+                somente no servidor, e essa conta
+                deve ter permissão de Leitor no GA4.
+                Reinicie o servidor após configurar.
               </p>
 
               <p>
-                No ambiente local, as credenciais
-                ficam em <code>.env.local</code>.
-                Na Vercel, devem estar configuradas
-                nas variáveis de ambiente do projeto.
+                Não é necessário cadastrar cada URL.
+                Com a autenticação ativa, as páginas
+                registradas no GA4 serão consultadas
+                automaticamente para o período escolhido.
               </p>
             </Section>
           ) : (
