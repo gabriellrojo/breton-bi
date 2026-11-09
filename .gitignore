@@ -1,0 +1,15 @@
+
+node_modules/
+.next/
+.env*
+!.env.example
+*.tsbuildinfo
+
+# Credenciais e arquivos sensíveis
+*service-account*.json
+*credentials*.json
+breton-bi-*.json
+
+# Arquivos do macOS
+.DS_Store
+
