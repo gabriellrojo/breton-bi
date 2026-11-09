@@ -752,9 +752,8 @@ export default function Home() {
                   color: '#777',
                 }}
               >
-                Sessões com mais de 10 segundos,
-                2 ou mais páginas/telas ou um evento
-                principal. Não significa orçamento enviado.
+                mais de 10 segundos de retenção,
+                2 ou mais páginas/telas.
               </small>
             </div>
           </div>
