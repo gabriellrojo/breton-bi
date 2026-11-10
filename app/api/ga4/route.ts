@@ -5,10 +5,16 @@ import { BetaAnalyticsDataClient } from '@google-analytics/data';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const property = '494454950';
+type Store = 'br' | 'en' | 'es';
 
-const valid = (v: string) =>
-  /^\d{4}-\d{2}-\d{2}$/.test(v);
+const properties: Record<Store, string> = {
+  br: '494454950',
+  en: '494483822',
+  es: '494471953',
+};
+
+const valid = (value: string) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(value);
 
 type ReportRow = {
   dimensions: string[];
@@ -44,13 +50,7 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
     const itemId = row.dimensions[0]?.trim() || '';
     const itemName = row.dimensions[1]?.trim() || '';
 
-    if (!itemId && !itemName) {
-      continue;
-    }
-
-    // IDs válidos são a chave principal de agrupamento.
-    // Quando o GA4 não informa um ID, mantemos o nome
-    // como chave para não juntar produtos desconhecidos.
+    if (!itemId && !itemName) continue;
 
     const key =
       itemId && itemId !== '(not set)'
@@ -59,8 +59,7 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
 
     if (!grouped.has(key)) {
       grouped.set(key, {
-        itemId:
-          itemId === '(not set)' ? '' : itemId,
+        itemId: itemId === '(not set)' ? '' : itemId,
         views: 0,
         quoteAdds: 0,
         names: new Map(),
@@ -68,7 +67,6 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
     }
 
     const product = grouped.get(key)!;
-
     const views = row.metrics[0] || 0;
     const quoteAdds = row.metrics[1] || 0;
 
@@ -92,11 +90,7 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
     .map((product) => {
       const names = [...product.names.entries()].sort(
         (a, b) => {
-          // Prioriza o nome que recebeu mais visualizações.
-          // Em caso de empate, usa o nome com mais adições.
-
-          const viewsDifference =
-            b[1].views - a[1].views;
+          const viewsDifference = b[1].views - a[1].views;
 
           if (viewsDifference !== 0) {
             return viewsDifference;
@@ -126,6 +120,23 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
 }
 
 export async function GET(req: NextRequest) {
+  const requestedStore =
+    req.nextUrl.searchParams.get('store') || 'br';
+
+  if (
+    requestedStore !== 'br' &&
+    requestedStore !== 'en' &&
+    requestedStore !== 'es'
+  ) {
+    return NextResponse.json(
+      { error: 'Loja inválida. Utilize br, en ou es.' },
+      { status: 400 },
+    );
+  }
+
+  const store: Store = requestedStore;
+  const property = properties[store];
+
   const start =
     req.nextUrl.searchParams.get('start') || '2026-08-11';
 
@@ -145,7 +156,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          'Conexão GA4 não configurada. Defina GA4_SERVICE_ACCOUNT_JSON no .env.local e conceda acesso de leitura à conta de serviço na propriedade 494454950.',
+          'Conexão GA4 não configurada. Defina GA4_SERVICE_ACCOUNT_JSON no .env.local e conceda acesso de leitura à conta de serviço nas três propriedades.',
       },
       { status: 503 },
     );
@@ -176,11 +187,10 @@ export async function GET(req: NextRequest) {
       all = false,
     ): Promise<ReportRow[]> {
       const result: ReportRow[] = [];
-
       let offset = 0;
 
       do {
-        const [r] = await client.runReport({
+        const [response] = await client.runReport({
           property: `properties/${property}`,
           dateRanges: range,
           dimensions: dimensions.map((name) => ({
@@ -194,25 +204,24 @@ export async function GET(req: NextRequest) {
           keepEmptyRows: false,
         });
 
-        const rows: ReportRow[] = (r.rows || []).map(
-          (row) => ({
-            dimensions: (row.dimensionValues || []).map(
-              (v) => v.value || '',
-            ),
-            metrics: (row.metricValues || []).map(
-              (v) => Number(v.value || 0),
-            ),
-          }),
-        );
+        const rows: ReportRow[] = (
+          response.rows || []
+        ).map((row) => ({
+          dimensions: (
+            row.dimensionValues || []
+          ).map((value) => value.value || ''),
+          metrics: (
+            row.metricValues || []
+          ).map((value) => Number(value.value || 0)),
+        }));
 
         result.push(...rows);
-
         offset += rows.length;
 
         if (
           !all ||
           !rows.length ||
-          offset >= Number(r.rowCount || 0) ||
+          offset >= Number(response.rowCount || 0) ||
           offset >= 1000000
         ) {
           break;
@@ -280,10 +289,6 @@ export async function GET(req: NextRequest) {
         true,
       ),
 
-      // Consulta atualizada:
-      // itemId + itemName permitem identificar
-      // nomes diferentes associados ao mesmo item.
-
       report(
         ['itemId', 'itemName'],
         ['itemsViewed', 'itemsAddedToCart'],
@@ -292,11 +297,12 @@ export async function GET(req: NextRequest) {
     ]);
 
     const t = totals[0]?.metrics || [];
-
     const products = groupProducts(items);
 
     return NextResponse.json({
       source: 'ga4-live',
+      store,
+      property,
 
       period: {
         from: start,
@@ -313,52 +319,62 @@ export async function GET(req: NextRequest) {
       },
 
       pages: paths
-        .map((x) => ({
-          path: x.dimensions[0],
-          views: x.metrics[0],
+        .map((row) => ({
+          path: row.dimensions[0],
+          views: row.metrics[0],
         }))
         .sort((a, b) => b.views - a.views),
 
-      events: events.map((x) => ({
-        name: x.dimensions[0],
-        count: x.metrics[0],
+      events: events.map((row) => ({
+        name: row.dimensions[0],
+        count: row.metrics[0],
       })),
 
       channels: channels
-        .map((x) => ({
-          name: x.dimensions[0],
-          sessions: x.metrics[0],
+        .map((row) => ({
+          name: row.dimensions[0],
+          sessions: row.metrics[0],
         }))
         .sort((a, b) => b.sessions - a.sessions),
 
-      devices: devices.map((x) => ({
-        name: x.dimensions[0],
-        sessions: x.metrics[0],
+      devices: devices.map((row) => ({
+        name: row.dimensions[0],
+        sessions: row.metrics[0],
       })),
 
       countries: countries
-        .map((x) => ({
-          name: x.dimensions[0],
-          sessions: x.metrics[0],
+        .map((row) => ({
+          name: row.dimensions[0],
+          sessions: row.metrics[0],
         }))
         .sort((a, b) => b.sessions - a.sessions),
 
       landings: landings
-        .map((x) => ({
-          path: x.dimensions[0],
-          sessions: x.metrics[0],
+        .map((row) => ({
+          path: row.dimensions[0],
+          sessions: row.metrics[0],
         }))
         .sort((a, b) => b.sessions - a.sessions),
 
       products,
     });
-  } catch (e) {
-    console.error('GA4 error', e);
+  } catch (error) {
+    console.error(
+      `GA4 error - store=${store}, property=${property}`,
+      error,
+    );
+
+    const storeName =
+      store === 'br'
+        ? 'brasileira'
+        : store === 'en'
+          ? 'inglesa'
+          : 'espanhola';
 
     return NextResponse.json(
       {
         error:
-          'Falha na consulta GA4. Verifique as permissões e credenciais da conta de serviço.',
+          `Falha na consulta GA4 da loja ${storeName}. Verifique as permissões e credenciais da conta de serviço.`,
       },
       { status: 502 },
     );
