@@ -1,20 +1,17 @@
 
-import { NextRequest, NextResponse } from 'next/server';
-import { BetaAnalyticsDataClient } from '@google-analytics/data';
+import { NextRequest, NextResponse } from "next/server";
+import { BetaAnalyticsDataClient } from "@google-analytics/data";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type Store = 'br' | 'en' | 'es';
+type Store = "br" | "en" | "es";
 
 const properties: Record<Store, string> = {
-  br: '494454950',
-  en: '494483822',
-  es: '494471953',
+  br: "494454950",
+  en: "494483822",
+  es: "494471953",
 };
-
-const valid = (value: string) =>
-  /^\d{4}-\d{2}-\d{2}$/.test(value);
 
 type ReportRow = {
   dimensions: string[];
@@ -28,6 +25,51 @@ type GroupedProduct = {
   quoteAdds: number;
   aliases: string[];
 };
+
+function parseDate(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.toISOString().slice(0, 10) !== value
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function formatDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function getPreviousPeriod(start: string, end: string) {
+  const startDate = parseDate(start)!;
+  const endDate = parseDate(end)!;
+
+  const days =
+    Math.round(
+      (endDate.getTime() - startDate.getTime()) / 86400000,
+    ) + 1;
+
+  const previousEnd = new Date(startDate);
+  previousEnd.setUTCDate(previousEnd.getUTCDate() - 1);
+
+  const previousStart = new Date(previousEnd);
+  previousStart.setUTCDate(
+    previousStart.getUTCDate() - days + 1,
+  );
+
+  return {
+    from: formatDate(previousStart),
+    to: formatDate(previousEnd),
+    days,
+  };
+}
 
 function groupProducts(rows: ReportRow[]): GroupedProduct[] {
   const grouped = new Map<
@@ -47,19 +89,20 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
   >();
 
   for (const row of rows) {
-    const itemId = row.dimensions[0]?.trim() || '';
-    const itemName = row.dimensions[1]?.trim() || '';
+    const itemId = row.dimensions[0]?.trim() || "";
+    const itemName = row.dimensions[1]?.trim() || "";
 
     if (!itemId && !itemName) continue;
 
-    const key =
-      itemId && itemId !== '(not set)'
-        ? `id:${itemId}`
-        : `name:${itemName}`;
+    const hasId = itemId && itemId !== "(not set)";
+
+    const key = hasId
+      ? `id:${itemId}`
+      : `name:${itemName}`;
 
     if (!grouped.has(key)) {
       grouped.set(key, {
-        itemId: itemId === '(not set)' ? '' : itemId,
+        itemId: hasId ? itemId : "",
         views: 0,
         quoteAdds: 0,
         names: new Map(),
@@ -73,38 +116,32 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
     product.views += views;
     product.quoteAdds += quoteAdds;
 
-    if (itemName && itemName !== '(not set)') {
-      const existingName = product.names.get(itemName) || {
+    if (itemName && itemName !== "(not set)") {
+      const existing = product.names.get(itemName) || {
         views: 0,
         quoteAdds: 0,
       };
 
-      existingName.views += views;
-      existingName.quoteAdds += quoteAdds;
+      existing.views += views;
+      existing.quoteAdds += quoteAdds;
 
-      product.names.set(itemName, existingName);
+      product.names.set(itemName, existing);
     }
   }
 
   return [...grouped.values()]
     .map((product) => {
       const names = [...product.names.entries()].sort(
-        (a, b) => {
-          const viewsDifference = b[1].views - a[1].views;
-
-          if (viewsDifference !== 0) {
-            return viewsDifference;
-          }
-
-          return b[1].quoteAdds - a[1].quoteAdds;
-        },
+        (a, b) =>
+          b[1].views - a[1].views ||
+          b[1].quoteAdds - a[1].quoteAdds,
       );
 
       const primaryName =
         names[0]?.[0] ||
         (product.itemId
           ? `Produto ${product.itemId}`
-          : 'Produto sem identificação');
+          : "Produto sem identificação");
 
       return {
         itemId: product.itemId,
@@ -119,17 +156,62 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
     .sort((a, b) => b.views - a.views);
 }
 
+function overviewFromRows(rows: ReportRow[]) {
+  const metrics = rows[0]?.metrics || [];
+
+  return {
+    sessions: metrics[0] || 0,
+    activeUsers: metrics[1] || 0,
+    pageViews: metrics[2] || 0,
+    engagedSessions: metrics[3] || 0,
+    engagementRate: metrics[4] || 0,
+    avgSessionSeconds: metrics[5] || 0,
+  };
+}
+
+function dateRangeDays(from: string, to: string) {
+  const result: string[] = [];
+  const current = parseDate(from)!;
+  const last = parseDate(to)!;
+
+  while (current <= last) {
+    result.push(formatDate(current));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  return result;
+}
+
+function formatDailyRows(
+  rows: ReportRow[],
+  from: string,
+  to: string,
+) {
+  const byDate = new Map(
+    rows.map((row) => [
+      row.dimensions[0],
+      row.metrics[0] || 0,
+    ]),
+  );
+
+  return dateRangeDays(from, to).map((date) => ({
+    date,
+    sessions:
+      byDate.get(date.replaceAll("-", "")) || 0,
+  }));
+}
+
 export async function GET(req: NextRequest) {
   const requestedStore =
-    req.nextUrl.searchParams.get('store') || 'br';
+    req.nextUrl.searchParams.get("store") || "br";
 
   if (
-    requestedStore !== 'br' &&
-    requestedStore !== 'en' &&
-    requestedStore !== 'es'
+    requestedStore !== "br" &&
+    requestedStore !== "en" &&
+    requestedStore !== "es"
   ) {
     return NextResponse.json(
-      { error: 'Loja inválida. Utilize br, en ou es.' },
+      { error: "Loja inválida. Utilize br, en ou es." },
       { status: 400 },
     );
   }
@@ -138,17 +220,22 @@ export async function GET(req: NextRequest) {
   const property = properties[store];
 
   const start =
-    req.nextUrl.searchParams.get('start') || '2026-08-11';
+    req.nextUrl.searchParams.get("start") || "2026-08-11";
 
   const end =
-    req.nextUrl.searchParams.get('end') || '2026-11-08';
+    req.nextUrl.searchParams.get("end") || "2026-11-08";
 
-  if (!valid(start) || !valid(end) || start > end) {
+  const startDate = parseDate(start);
+  const endDate = parseDate(end);
+
+  if (!startDate || !endDate || startDate > endDate) {
     return NextResponse.json(
-      { error: 'Período inválido' },
+      { error: "Período inválido." },
       { status: 400 },
     );
   }
+
+  const previousPeriod = getPreviousPeriod(start, end);
 
   const raw = process.env.GA4_SERVICE_ACCOUNT_JSON;
 
@@ -156,7 +243,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          'Conexão GA4 não configurada. Defina GA4_SERVICE_ACCOUNT_JSON no .env.local e conceda acesso de leitura à conta de serviço nas três propriedades.',
+          "Conexão GA4 não configurada. Defina GA4_SERVICE_ACCOUNT_JSON.",
       },
       { status: 503 },
     );
@@ -167,23 +254,18 @@ export async function GET(req: NextRequest) {
 
     if (credentials.private_key) {
       credentials.private_key =
-        credentials.private_key.replace(/\\n/g, '\n');
+        credentials.private_key.replace(/\\n/g, "\n");
     }
 
     const client = new BetaAnalyticsDataClient({
       credentials,
     });
 
-    const range = [
-      {
-        startDate: start,
-        endDate: end,
-      },
-    ];
-
     async function report(
       dimensions: string[],
       metrics: string[],
+      from: string,
+      to: string,
       all = false,
     ): Promise<ReportRow[]> {
       const result: ReportRow[] = [];
@@ -192,7 +274,12 @@ export async function GET(req: NextRequest) {
       do {
         const [response] = await client.runReport({
           property: `properties/${property}`,
-          dateRanges: range,
+          dateRanges: [
+            {
+              startDate: from,
+              endDate: to,
+            },
+          ],
           dimensions: dimensions.map((name) => ({
             name,
           })),
@@ -207,12 +294,12 @@ export async function GET(req: NextRequest) {
         const rows: ReportRow[] = (
           response.rows || []
         ).map((row) => ({
-          dimensions: (
-            row.dimensionValues || []
-          ).map((value) => value.value || ''),
-          metrics: (
-            row.metricValues || []
-          ).map((value) => Number(value.value || 0)),
+          dimensions: (row.dimensionValues || []).map(
+            (value) => value.value || "",
+          ),
+          metrics: (row.metricValues || []).map(
+            (value) => Number(value.value || 0),
+          ),
         }));
 
         result.push(...rows);
@@ -231,8 +318,20 @@ export async function GET(req: NextRequest) {
       return result;
     }
 
+    const overviewMetrics = [
+      "sessions",
+      "activeUsers",
+      "screenPageViews",
+      "engagedSessions",
+      "engagementRate",
+      "averageSessionDuration",
+    ];
+
     const [
       totals,
+      previousTotals,
+      currentDailyRows,
+      previousDailyRows,
       paths,
       events,
       channels,
@@ -241,66 +340,138 @@ export async function GET(req: NextRequest) {
       landings,
       items,
     ] = await Promise.all([
+      report([], overviewMetrics, start, end),
+
       report(
         [],
-        [
-          'sessions',
-          'activeUsers',
-          'screenPageViews',
-          'engagedSessions',
-          'engagementRate',
-          'averageSessionDuration',
-        ],
+        overviewMetrics,
+        previousPeriod.from,
+        previousPeriod.to,
       ),
 
       report(
-        ['pagePath'],
-        ['screenPageViews'],
+        ["date"],
+        ["sessions"],
+        start,
+        end,
         true,
       ),
 
       report(
-        ['eventName'],
-        ['eventCount'],
+        ["date"],
+        ["sessions"],
+        previousPeriod.from,
+        previousPeriod.to,
         true,
       ),
 
       report(
-        ['sessionDefaultChannelGroup'],
-        ['sessions'],
+        ["pagePath"],
+        ["screenPageViews"],
+        start,
+        end,
         true,
       ),
 
       report(
-        ['deviceCategory'],
-        ['sessions'],
+        ["eventName"],
+        ["eventCount"],
+        start,
+        end,
         true,
       ),
 
       report(
-        ['country'],
-        ['sessions'],
+        ["sessionDefaultChannelGroup"],
+        ["sessions"],
+        start,
+        end,
         true,
       ),
 
       report(
-        ['landingPage'],
-        ['sessions'],
+        ["deviceCategory"],
+        ["sessions"],
+        start,
+        end,
         true,
       ),
 
       report(
-        ['itemId', 'itemName'],
-        ['itemsViewed', 'itemsAddedToCart'],
+        ["country"],
+        ["sessions"],
+        start,
+        end,
+        true,
+      ),
+
+      report(
+        ["landingPage"],
+        ["sessions"],
+        start,
+        end,
+        true,
+      ),
+
+      report(
+        ["itemId", "itemName"],
+        ["itemsViewed", "itemsAddedToCart"],
+        start,
+        end,
         true,
       ),
     ]);
 
-    const t = totals[0]?.metrics || [];
-    const products = groupProducts(items);
+    const overview = overviewFromRows(totals);
+    const previousOverview =
+      overviewFromRows(previousTotals);
+
+    const currentDaily = formatDailyRows(
+      currentDailyRows,
+      start,
+      end,
+    );
+
+    const previousDaily = formatDailyRows(
+      previousDailyRows,
+      previousPeriod.from,
+      previousPeriod.to,
+    );
+
+    // Compara o dia 1 de cada intervalo, dia 2 etc.
+    const dailyComparison = currentDaily.map(
+      (day, index) => ({
+        day: index + 1,
+        currentDate: day.date,
+        previousDate: previousDaily[index]?.date || "",
+        currentSessions: day.sessions,
+        previousSessions:
+          previousDaily[index]?.sessions || 0,
+      }),
+    );
+
+    const eventCount = (name: string) =>
+      events.find(
+        (row) => row.dimensions[0] === name,
+      )?.metrics[0] || 0;
+
+    // A comparação de orçamentos usa o mesmo evento
+    // add_to_cart que alimenta o card atual.
+    const previousAddToCart = await report(
+      ["eventName"],
+      ["eventCount"],
+      previousPeriod.from,
+      previousPeriod.to,
+      true,
+    );
+
+    const previousQuoteAdds =
+      previousAddToCart.find(
+        (row) => row.dimensions[0] === "add_to_cart",
+      )?.metrics[0] || 0;
 
     return NextResponse.json({
-      source: 'ga4-live',
+      source: "ga4-live",
       store,
       property,
 
@@ -309,14 +480,31 @@ export async function GET(req: NextRequest) {
         to: end,
       },
 
-      overview: {
-        sessions: t[0] || 0,
-        activeUsers: t[1] || 0,
-        pageViews: t[2] || 0,
-        engagedSessions: t[3] || 0,
-        engagementRate: t[4] || 0,
-        avgSessionSeconds: t[5] || 0,
+      previousPeriod: {
+        from: previousPeriod.from,
+        to: previousPeriod.to,
       },
+
+      overview,
+
+      previousOverview,
+
+      comparison: {
+        current: {
+          sessions: overview.sessions,
+          activeUsers: overview.activeUsers,
+          pageViews: overview.pageViews,
+          quoteAdds: eventCount("add_to_cart"),
+        },
+        previous: {
+          sessions: previousOverview.sessions,
+          activeUsers: previousOverview.activeUsers,
+          pageViews: previousOverview.pageViews,
+          quoteAdds: previousQuoteAdds,
+        },
+      },
+
+      dailyComparison,
 
       pages: paths
         .map((row) => ({
@@ -356,7 +544,7 @@ export async function GET(req: NextRequest) {
         }))
         .sort((a, b) => b.sessions - a.sessions),
 
-      products,
+      products: groupProducts(items),
     });
   } catch (error) {
     console.error(
@@ -364,17 +552,10 @@ export async function GET(req: NextRequest) {
       error,
     );
 
-    const storeName =
-      store === 'br'
-        ? 'brasileira'
-        : store === 'en'
-          ? 'inglesa'
-          : 'espanhola';
-
     return NextResponse.json(
       {
         error:
-          `Falha na consulta GA4 da loja ${storeName}. Verifique as permissões e credenciais da conta de serviço.`,
+          "Falha na consulta GA4. Verifique as permissões, credenciais e o período selecionado.",
       },
       { status: 502 },
     );

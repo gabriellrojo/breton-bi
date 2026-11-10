@@ -1,5 +1,4 @@
-
-'use client';
+"use client";
 
 import {
   useEffect,
@@ -7,7 +6,7 @@ import {
   useRef,
   useState,
   type ReactNode,
-} from 'react';
+} from "react";
 
 import {
   LayoutDashboard,
@@ -25,11 +24,14 @@ import {
   Info,
   ArrowDownUp,
   LoaderCircle,
-} from 'lucide-react';
+  TrendingUp,
+  TrendingDown,
+  Minus,
+} from "lucide-react";
 
-import * as snapshot from '@/lib/snapshot';
+import * as snapshot from "@/lib/snapshot";
 
-type Store = 'br' | 'en' | 'es';
+type Store = "br" | "en" | "es";
 
 type Page = {
   path: string;
@@ -54,18 +56,48 @@ type Channel = {
   sessions: number;
 };
 
+type Overview = {
+  sessions: number;
+  activeUsers: number;
+  pageViews: number;
+  engagedSessions: number;
+  engagementRate: number;
+  avgSessionSeconds: number;
+};
+
+type ComparisonValues = {
+  sessions: number;
+  activeUsers: number;
+  pageViews: number;
+  quoteAdds: number;
+};
+
+type DailyComparison = {
+  day: number;
+  currentDate: string;
+  previousDate: string;
+  currentSessions: number;
+  previousSessions: number;
+};
+
+type Period = {
+  from: string;
+  to: string;
+};
+
 type Data = {
   source: string;
   store?: Store;
   property?: string;
-  overview: {
-    sessions: number;
-    activeUsers: number;
-    pageViews: number;
-    engagedSessions: number;
-    engagementRate: number;
-    avgSessionSeconds: number;
+  period?: Period;
+  previousPeriod?: Period;
+  overview: Overview;
+  previousOverview?: Overview;
+  comparison?: {
+    current: ComparisonValues;
+    previous: ComparisonValues;
   };
+  dailyComparison?: DailyComparison[];
   pages: Page[];
   products: Product[];
   events: Event[];
@@ -87,25 +119,50 @@ const stores: Record<
   }
 > = {
   br: {
-    label: 'Brasil',
-    domain: 'www.breton.co',
-    property: '494454950',
+    label: "Brasil",
+    domain: "www.breton.co",
+    property: "494454950",
   },
   en: {
-    label: 'Inglês',
-    domain: 'en.breton.co',
-    property: '494483822',
+    label: "Inglês",
+    domain: "en.breton.co",
+    property: "494483822",
   },
   es: {
-    label: 'Espanhol',
-    domain: 'es.breton.co',
-    property: '494471953',
+    label: "Espanhol",
+    domain: "es.breton.co",
+    property: "494471953",
   },
 };
 
+const emptyOverview: Overview = {
+  sessions: 0,
+  activeUsers: 0,
+  pageViews: 0,
+  engagedSessions: 0,
+  engagementRate: 0,
+  avgSessionSeconds: 0,
+};
+
+function emptyData(store: Store): Data {
+  return {
+    source: "unavailable",
+    store,
+    property: stores[store].property,
+    overview: { ...emptyOverview },
+    pages: [],
+    products: [],
+    events: [],
+    channels: [],
+    devices: [],
+    countries: [],
+    landings: [],
+  };
+}
+
 const base: Data = {
-  source: 'snapshot',
-  store: 'br',
+  source: "snapshot",
+  store: "br",
   property: stores.br.property,
   overview: {
     sessions: snapshot.overview.sessionsDailySum,
@@ -124,72 +181,74 @@ const base: Data = {
   landings: snapshot.landings,
 };
 
-function emptyData(store: Store): Data {
-  return {
-    source: 'unavailable',
-    store,
-    property: stores[store].property,
-    overview: {
-      sessions: 0,
-      activeUsers: 0,
-      pageViews: 0,
-      engagedSessions: 0,
-      engagementRate: 0,
-      avgSessionSeconds: 0,
-    },
-    pages: [],
-    products: [],
-    events: [],
-    channels: [],
-    devices: [],
-    countries: [],
-    landings: [],
-  };
-}
-
 const fmt = (n: number) =>
-  new Intl.NumberFormat('pt-BR').format(n);
+  new Intl.NumberFormat("pt-BR").format(n);
 
 const pct = (n: number) =>
-  new Intl.NumberFormat('pt-BR', {
-    style: 'percent',
+  new Intl.NumberFormat("pt-BR", {
+    style: "percent",
     maximumFractionDigits: 1,
   }).format(n);
 
+const formatDate = (date: string) => {
+  if (!date) return "";
+
+  const [year, month, day] = date.split("-");
+
+  return `${day}/${month}/${year}`;
+};
+
+function countPeriodDays(period?: Period) {
+  if (!period?.from || !period?.to) return 0;
+
+  const start = Date.parse(`${period.from}T00:00:00Z`);
+  const end = Date.parse(`${period.to}T00:00:00Z`);
+
+  if (
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    end < start
+  ) {
+    return 0;
+  }
+
+  return Math.round((end - start) / 86400000) + 1;
+}
+
 const nav = [
   {
-    id: 'overview',
-    label: 'Visão geral',
+    id: "overview",
+    label: "Visão geral",
     icon: LayoutDashboard,
   },
   {
-    id: 'acquisition',
-    label: 'Origem dos visitantes',
+    id: "acquisition",
+    label: "Origem dos visitantes",
     icon: ChartNoAxesCombined,
   },
   {
-    id: 'site',
-    label: 'Mapa do site',
+    id: "site",
+    label: "Mapa do site",
     icon: Network,
   },
   {
-    id: 'products',
-    label: 'Produtos',
+    id: "products",
+    label: "Produtos",
     icon: Armchair,
   },
   {
-    id: 'funnel',
-    label: 'Funil de orçamento',
+    id: "funnel",
+    label: "Funil de orçamento",
     icon: ShoppingBag,
   },
   {
-    id: 'events',
-    label: 'Eventos',
+    id: "events",
+    label: "Eventos",
     icon: Activity,
   },
   {
-    id: 'audience',
-    label: 'Público e dispositivos',
+    id: "audience",
+    label: "Público e dispositivos",
     icon: MonitorSmartphone,
   },
 ];
@@ -208,10 +267,342 @@ function Card({
       <div className="metric-label">{label}</div>
 
       <strong>
-        {typeof value === 'number' ? fmt(value) : value}
+        {typeof value === "number" ? fmt(value) : value}
       </strong>
 
       {detail && <small>{detail}</small>}
+    </div>
+  );
+}
+
+function CompareCard({
+  label,
+  current,
+  previous,
+  detail,
+}: {
+  label: string;
+  current: number;
+  previous: number;
+  detail?: string;
+}) {
+  const difference = current - previous;
+
+  const change =
+    previous === 0
+      ? null
+      : (difference / previous) * 100;
+
+  const positive = difference > 0;
+  const negative = difference < 0;
+
+  const color = positive
+    ? "#16834a"
+    : negative
+      ? "#c0392b"
+      : "#777777";
+
+  const ChangeIcon = positive
+    ? TrendingUp
+    : negative
+      ? TrendingDown
+      : Minus;
+
+  return (
+    <div className="metric">
+      <div className="metric-label">{label}</div>
+
+      <strong>{fmt(current)}</strong>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          marginTop: 12,
+          color,
+          fontWeight: 700,
+          fontSize: 13,
+        }}
+      >
+        {change !== null && <ChangeIcon size={16} />}
+
+        <span>
+          {change === null
+            ? "Sem base para comparação"
+            : `${
+                change > 0 ? "+" : ""
+              }${change.toLocaleString("pt-BR", {
+                maximumFractionDigits: 1,
+              })}%`}
+        </span>
+      </div>
+
+      <small
+        style={{
+          display: "block",
+          marginTop: 6,
+        }}
+      >
+        Período anterior: {fmt(previous)}
+      </small>
+
+      {detail && (
+        <small
+          style={{
+            display: "block",
+            marginTop: 8,
+          }}
+        >
+          {detail}
+        </small>
+      )}
+    </div>
+  );
+}
+
+// NOVO: explicação dinâmica da comparação.
+function PeriodComparisonExplanation({
+  currentPeriod,
+  previousPeriod,
+}: {
+  currentPeriod?: Period;
+  previousPeriod?: Period;
+}) {
+  const days = countPeriodDays(currentPeriod);
+
+  if (!currentPeriod || !previousPeriod) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        border: "1px solid #e6e0df",
+        borderRadius: 12,
+        padding: "20px 22px",
+        background: "#faf9f7",
+        marginBottom: 24,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 11,
+          marginBottom: 12,
+        }}
+      >
+        <Info
+          size={19}
+          color="#7e2a43"
+          style={{
+            flexShrink: 0,
+            marginTop: 2,
+          }}
+        />
+
+        <div>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: 15,
+              fontWeight: 700,
+              color: "#383333",
+            }}
+          >
+            Como funciona a comparação de períodos?
+          </h3>
+
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 13,
+              lineHeight: 1.7,
+              color: "#686262",
+            }}
+          >
+            Os indicadores acima comparam o período
+            selecionado com os dias imediatamente
+            anteriores, utilizando sempre a mesma
+            quantidade de dias.
+          </p>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(190px, 1fr))",
+          gap: 12,
+          marginTop: 18,
+          marginBottom: 16,
+        }}
+      >
+        <div
+          style={{
+            border: "1px solid #eadce1",
+            background: "#ffffff",
+            borderRadius: 9,
+            padding: "13px 15px",
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "#7e2a43",
+              marginBottom: 7,
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            Período selecionado
+          </span>
+
+          <strong
+            style={{
+              display: "block",
+              fontSize: 15,
+              color: "#383333",
+            }}
+          >
+            {formatDate(currentPeriod.from)} a{" "}
+            {formatDate(currentPeriod.to)}
+          </strong>
+
+          <span
+            style={{
+              display: "block",
+              marginTop: 6,
+              fontSize: 12,
+              color: "#777",
+            }}
+          >
+            {days} {days === 1 ? "dia" : "dias"}
+          </span>
+        </div>
+
+        <div
+          style={{
+            border: "1px solid #e6e0df",
+            background: "#ffffff",
+            borderRadius: 9,
+            padding: "13px 15px",
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "#777",
+              marginBottom: 7,
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            Período anterior
+          </span>
+
+          <strong
+            style={{
+              display: "block",
+              fontSize: 15,
+              color: "#383333",
+            }}
+          >
+            {formatDate(previousPeriod.from)} a{" "}
+            {formatDate(previousPeriod.to)}
+          </strong>
+
+          <span
+            style={{
+              display: "block",
+              marginTop: 6,
+              fontSize: 12,
+              color: "#777",
+            }}
+          >
+            {countPeriodDays(previousPeriod)}{" "}
+            {countPeriodDays(previousPeriod) === 1
+              ? "dia"
+              : "dias"}
+          </span>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "12px 24px",
+          fontSize: 12,
+          lineHeight: 1.6,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 7,
+          }}
+        >
+          <TrendingUp
+            size={16}
+            color="#16834a"
+            style={{ flexShrink: 0, marginTop: 2 }}
+          />
+
+          <span style={{ color: "#686262" }}>
+            <strong style={{ color: "#16834a" }}>
+              +15%
+            </strong>{" "}
+            significa que o indicador aumentou
+            15% em relação ao período anterior.
+          </span>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 7,
+          }}
+        >
+          <TrendingDown
+            size={16}
+            color="#c0392b"
+            style={{ flexShrink: 0, marginTop: 2 }}
+          />
+
+          <span style={{ color: "#686262" }}>
+            <strong style={{ color: "#c0392b" }}>
+              −8%
+            </strong>{" "}
+            significa que o indicador diminuiu
+            8% em relação ao período anterior.
+          </span>
+        </div>
+      </div>
+
+      <p
+        style={{
+          margin: "14px 0 0",
+          fontSize: 11,
+          color: "#888",
+          lineHeight: 1.6,
+        }}
+      >
+        As porcentagens acima são exemplos
+        explicativos. Os percentuais reais estão
+        nos indicadores. Uma variação positiva
+        ou negativa representa mudança no volume,
+        não necessariamente melhora ou piora
+        do desempenho.
+      </p>
     </div>
   );
 }
@@ -252,7 +643,11 @@ function Bars({
   }[];
 }) {
   const top = items.slice(0, 12);
-  const max = Math.max(1, ...top.map((item) => item.value));
+
+  const max = Math.max(
+    1,
+    ...top.map((item) => item.value),
+  );
 
   return (
     <div className="bars">
@@ -279,6 +674,332 @@ function Bars({
   );
 }
 
+function DailyComparisonChart({
+  rows,
+  previousPeriod,
+  currentPeriod,
+}: {
+  rows: DailyComparison[];
+  previousPeriod?: Period;
+  currentPeriod?: Period;
+}) {
+  const [hovered, setHovered] = useState<number | null>(
+    null,
+  );
+
+  if (!rows.length) {
+    return (
+      <p style={{ color: "#777", fontSize: 13 }}>
+        Não há dados diários para exibir.
+      </p>
+    );
+  }
+
+  const width = 1000;
+  const height = 320;
+
+  const left = 56;
+  const right = 20;
+  const top = 24;
+  const bottom = 42;
+
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+
+  const max = Math.max(
+    1,
+    ...rows.flatMap((row) => [
+      row.currentSessions,
+      row.previousSessions,
+    ]),
+  );
+
+  const x = (index: number) =>
+    left +
+    (rows.length === 1
+      ? plotWidth / 2
+      : (index / (rows.length - 1)) * plotWidth);
+
+  const y = (value: number) =>
+    top + plotHeight - (value / max) * plotHeight;
+
+  const makeLine = (
+    key: "currentSessions" | "previousSessions",
+  ) =>
+    rows
+      .map(
+        (row, index) =>
+          `${index === 0 ? "M" : "L"} ${x(index)} ${y(
+            row[key],
+          )}`,
+      )
+      .join(" ");
+
+  const ticks = Array.from(
+    { length: 5 },
+    (_, index) => (max / 4) * index,
+  );
+
+  const labelIndexes = Array.from(
+    new Set([
+      0,
+      Math.floor((rows.length - 1) / 4),
+      Math.floor((rows.length - 1) / 2),
+      Math.floor(((rows.length - 1) * 3) / 4),
+      rows.length - 1,
+    ]),
+  );
+
+  const selected =
+    hovered === null ? null : rows[hovered];
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 20,
+          marginBottom: 12,
+          fontSize: 13,
+        }}
+      >
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+          }}
+        >
+          <span
+            style={{
+              width: 18,
+              height: 3,
+              background: "#7e2a43",
+              display: "inline-block",
+            }}
+          />
+
+          Período atual
+        </span>
+
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+          }}
+        >
+          <span
+            style={{
+              width: 18,
+              height: 3,
+              background: "#9aa0a6",
+              display: "inline-block",
+            }}
+          />
+
+          Período anterior
+        </span>
+      </div>
+
+      <div
+        style={{
+          overflowX: "auto",
+          width: "100%",
+        }}
+      >
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          style={{
+            width: "100%",
+            minWidth: 480,
+            display: "block",
+          }}
+          role="img"
+          aria-label="Gráfico comparativo de sessões diárias entre o período atual e o anterior"
+          onMouseLeave={() => setHovered(null)}
+        >
+          {ticks.map((value, index) => (
+            <g key={index}>
+              <line
+                x1={left}
+                y1={y(value)}
+                x2={width - right}
+                y2={y(value)}
+                stroke="#e9e6e6"
+                strokeWidth={1}
+              />
+
+              <text
+                x={left - 12}
+                y={y(value) + 4}
+                textAnchor="end"
+                fontSize={12}
+                fill="#888"
+              >
+                {fmt(Math.round(value))}
+              </text>
+            </g>
+          ))}
+
+          {labelIndexes.map((index) => (
+            <text
+              key={index}
+              x={x(index)}
+              y={height - 12}
+              textAnchor="middle"
+              fontSize={12}
+              fill="#888"
+            >
+              Dia {index + 1}
+            </text>
+          ))}
+
+          {rows.length > 1 && (
+            <>
+              <path
+                d={makeLine("previousSessions")}
+                fill="none"
+                stroke="#9aa0a6"
+                strokeWidth={2.5}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+
+              <path
+                d={makeLine("currentSessions")}
+                fill="none"
+                stroke="#7e2a43"
+                strokeWidth={3}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            </>
+          )}
+
+          {rows.length === 1 && (
+            <>
+              <circle
+                cx={x(0)}
+                cy={y(rows[0].previousSessions)}
+                r={5}
+                fill="#9aa0a6"
+              />
+
+              <circle
+                cx={x(0)}
+                cy={y(rows[0].currentSessions)}
+                r={5}
+                fill="#7e2a43"
+              />
+            </>
+          )}
+
+          {selected && hovered !== null && (
+            <>
+              <line
+                x1={x(hovered)}
+                y1={top}
+                x2={x(hovered)}
+                y2={top + plotHeight}
+                stroke="#bcbcbc"
+                strokeDasharray="4 4"
+              />
+
+              <circle
+                cx={x(hovered)}
+                cy={y(selected.currentSessions)}
+                r={5}
+                fill="#7e2a43"
+                stroke="white"
+                strokeWidth={2}
+              />
+
+              <circle
+                cx={x(hovered)}
+                cy={y(selected.previousSessions)}
+                r={5}
+                fill="#9aa0a6"
+                stroke="white"
+                strokeWidth={2}
+              />
+            </>
+          )}
+
+          {rows.map((row, index) => (
+            <rect
+              key={row.currentDate}
+              x={
+                x(index) -
+                plotWidth / Math.max(rows.length, 1) / 2
+              }
+              y={top}
+              width={
+                plotWidth / Math.max(rows.length, 1)
+              }
+              height={plotHeight}
+              fill="transparent"
+              onMouseEnter={() => setHovered(index)}
+            />
+          ))}
+        </svg>
+      </div>
+
+      {selected && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 18,
+            padding: "12px 14px",
+            background: "#f7f5f5",
+            borderRadius: 8,
+            fontSize: 12,
+            marginTop: 8,
+          }}
+        >
+          <span>
+            <strong>Atual:</strong>{" "}
+            {formatDate(selected.currentDate)} —{" "}
+            {fmt(selected.currentSessions)} sessões
+          </span>
+
+          <span>
+            <strong>Anterior:</strong>{" "}
+            {formatDate(selected.previousDate)} —{" "}
+            {fmt(selected.previousSessions)} sessões
+          </span>
+        </div>
+      )}
+
+      <p
+        style={{
+          marginTop: 14,
+          fontSize: 12,
+          color: "#777",
+          lineHeight: 1.6,
+        }}
+      >
+        Os dias são alinhados pela posição dentro
+        de cada período: o primeiro dia do período
+        atual é comparado ao primeiro dia do
+        anterior, o segundo ao segundo, e assim
+        sucessivamente.
+        {currentPeriod && previousPeriod && (
+          <>
+            {" "}
+            Atual: {formatDate(currentPeriod.from)} a{" "}
+            {formatDate(currentPeriod.to)}. Anterior:{" "}
+            {formatDate(previousPeriod.from)} a{" "}
+            {formatDate(previousPeriod.to)}.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
 function csv(
   name: string,
   rows: Record<string, string | number>[],
@@ -288,24 +1009,24 @@ function csv(
   const keys = Object.keys(rows[0]);
 
   const value = (v: unknown) =>
-    '"' + String(v ?? '').replaceAll('"', '""') + '"';
+    '"' + String(v ?? "").replaceAll('"', '""') + '"';
 
   const content =
-    '\uFEFF' +
+    "\uFEFF" +
     [
-      keys.join(';'),
+      keys.join(";"),
       ...rows.map((row) =>
-        keys.map((key) => value(row[key])).join(';'),
+        keys.map((key) => value(row[key])).join(";"),
       ),
-    ].join('\n');
+    ].join("\n");
 
   const url = URL.createObjectURL(
     new Blob([content], {
-      type: 'text/csv;charset=utf-8',
+      type: "text/csv;charset=utf-8",
     }),
   );
 
-  const a = document.createElement('a');
+  const a = document.createElement("a");
 
   a.href = url;
   a.download = name;
@@ -319,54 +1040,54 @@ const excludedRootsByStore: Record<
   Set<string>
 > = {
   br: new Set([
-    'zona-interior',
-    'zona-exterior',
-    'indoor-area',
-    'outdoor-area',
-    'corporate',
-    'corporate2',
-    'indoor',
-    'outdoor',
-    'interior-area',
-    'exterior-area',
-    'about-us',
-    'about',
-    'our-story',
-    'designers-en',
-    'stores-en',
-    'products',
-    'product',
-    'blog-en',
-    'contact-us',
-    'area-interior',
-    'area-exterior',
-    'zona-interna',
-    'zona-externa',
+    "zona-interior",
+    "zona-exterior",
+    "indoor-area",
+    "outdoor-area",
+    "corporate",
+    "corporate2",
+    "indoor",
+    "outdoor",
+    "interior-area",
+    "exterior-area",
+    "about-us",
+    "about",
+    "our-story",
+    "designers-en",
+    "stores-en",
+    "products",
+    "product",
+    "blog-en",
+    "contact-us",
+    "area-interior",
+    "area-exterior",
+    "zona-interna",
+    "zona-externa",
   ]),
 
   en: new Set([
-    'area-interna',
-    'area-externa',
-    'zona-interior',
-    'zona-exterior',
-    'corporativo',
-    'corporate2',
-    'zona-interna',
-    'zona-externa',
-    'sobre-nos',
-    'contato',
+    "area-interna",
+    "area-externa",
+    "zona-interior",
+    "zona-exterior",
+    "corporativo",
+    "corporate2",
+    "zona-interna",
+    "zona-externa",
+    "sobre-nos",
+    "contato",
   ]),
 
   es: new Set([
-    'area-interna',
-    'area-externa',
-    'indoor-area',
-    'outdoor-area',
-    'corporativo',
-    'corporate',
-    'corporate2',
-    'sobre-nos',
-    'about-us',
+    "area-interna",
+    "area-externa",
+    "indoor-area",
+    "outdoor-area",
+    "corporativo",
+    "corporate",
+    "corporate2",
+    "sobre-nos",
+    "about-us",
   ]),
 };
 
@@ -378,21 +1099,15 @@ function decodeURIComponentSafe(value: string) {
   }
 }
 
-function isStorePath(
-  path: string,
-  store: Store,
-) {
-  const clean = path
-    .split('?')[0]
-    .split('#')[0];
-
-  const parts = clean.split('/').filter(Boolean);
+function isStorePath(path: string, store: Store) {
+  const clean = path.split("?")[0].split("#")[0];
+  const parts = clean.split("/").filter(Boolean);
 
   if (!parts.length) return true;
 
   const first = decodeURIComponentSafe(
     parts[0],
-  ).toLocaleLowerCase('pt-BR');
+  ).toLocaleLowerCase("pt-BR");
 
   if (excludedRootsByStore[store].has(first)) {
     return false;
@@ -400,13 +1115,13 @@ function isStorePath(
 
   if (
     [
-      'en',
-      'es',
-      'en-us',
-      'es-es',
-      'en-gb',
-      'english',
-      'espanol',
+      "en",
+      "es",
+      "en-us",
+      "es-es",
+      "en-gb",
+      "english",
+      "espanol",
     ].includes(first)
   ) {
     return false;
@@ -416,78 +1131,72 @@ function isStorePath(
 }
 
 const channelNames: Record<string, string> = {
-  'Organic Search': 'Pesquisa orgânica',
-  'Paid Search': 'Pesquisa paga',
-  Direct: 'Acesso direto',
-  'Organic Social': 'Redes sociais (orgânico)',
-  'Paid Social': 'Redes sociais (anúncios)',
-  Referral: 'Links de outros sites',
-  Email: 'E-mail',
-  'Cross-network': 'Campanhas em várias redes',
-  Unassigned: 'Canal não classificado',
-  '(not set)': 'Origem não identificada',
-  'AI Assistant':
-    'Assistentes de inteligência artificial',
-  Display: 'Anúncios gráficos',
-  'Paid Other': 'Outros anúncios',
-  'Organic Video': 'Vídeo orgânico',
-  'Paid Video': 'Vídeo pago',
-  'Organic Shopping': 'Compras orgânicas',
-  'Paid Shopping': 'Anúncios de produtos',
-  Affiliates: 'Afiliados',
-  Audio: 'Áudio',
-  SMS: 'Mensagem de texto',
-  'Mobile Push Notifications':
-    'Notificações no celular',
+  "Organic Search": "Pesquisa orgânica",
+  "Paid Search": "Pesquisa paga",
+  Direct: "Acesso direto",
+  "Organic Social": "Redes sociais (orgânico)",
+  "Paid Social": "Redes sociais (anúncios)",
+  Referral: "Links de outros sites",
+  Email: "E-mail",
+  "Cross-network": "Campanhas em várias redes",
+  Unassigned: "Canal não classificado",
+  "(not set)": "Origem não identificada",
+  "AI Assistant":
+    "Assistentes de inteligência artificial",
+  Display: "Anúncios gráficos",
+  "Paid Other": "Outros anúncios",
+  "Organic Video": "Vídeo orgânico",
+  "Paid Video": "Vídeo pago",
+  "Organic Shopping": "Compras orgânicas",
+  "Paid Shopping": "Anúncios de produtos",
+  Affiliates: "Afiliados",
+  Audio: "Áudio",
+  SMS: "Mensagem de texto",
+  "Mobile Push Notifications":
+    "Notificações no celular",
 };
 
 const deviceNames: Record<string, string> = {
-  desktop: 'Computador',
-  mobile: 'Celular',
-  tablet: 'Tablet',
-  'smart tv': 'Televisão inteligente',
+  desktop: "Computador",
+  mobile: "Celular",
+  tablet: "Tablet",
+  "smart tv": "Televisão inteligente",
 };
 
 const eventNames: Record<string, string> = {
-  page_view: 'Visualização de página',
-  view_item_list: 'Visualização de lista de produtos',
-  user_engagement: 'Engajamento do usuário',
-  view_footer: 'Visualização do rodapé',
+  page_view: "Visualização de página",
+  view_item_list: "Visualização de lista de produtos",
+  user_engagement: "Engajamento do usuário",
+  view_footer: "Visualização do rodapé",
   view_search_results:
-    'Visualização de resultados de busca',
-  select_item: 'Seleção de produto',
-  view_item: 'Visualização de produto',
-  session_start: 'Início de sessão',
-  view_promotion: 'Visualização de promoção',
-  view_menu: 'Visualização do menu',
+    "Visualização de resultados de busca",
+  select_item: "Seleção de produto",
+  view_item: "Visualização de produto",
+  session_start: "Início de sessão",
+  view_promotion: "Visualização de promoção",
+  view_menu: "Visualização do menu",
   view_item_specs:
-    'Visualização de especificações',
-  select_menu: 'Seleção no menu',
-  scroll: 'Rolagem da página',
-  form_start: 'Início de formulário',
-  form_submit: 'Envio de formulário',
-  first_visit: 'Primeira visita',
-  select_item_specs:
-    'Seleção de especificações',
-  click: 'Clique',
-  view_filter: 'Visualização de filtro',
-  file_download: 'Download de arquivo',
-  select_filter: 'Seleção de filtro',
-  select_top_bar: 'Seleção da barra superior',
-  view_item_zoom:
-    'Ampliação de imagem do produto',
-  add_to_cart: 'Adição para orçamento',
-  view_cart:
-    'Visualização da lista de orçamento',
-  select_footer: 'Seleção no rodapé',
-  select_promotion: 'Seleção de promoção',
-  begin_checkout:
-    'Início da finalização (a revisar)',
-  purchase:
-    'Finalização registrada (a validar)',
-  remove_from_cart:
-    'Remoção da lista de orçamento',
-  add_to_wishlist: 'Adição aos favoritos',
+    "Visualização de especificações",
+  select_menu: "Seleção no menu",
+  scroll: "Rolagem da página",
+  form_start: "Início de formulário",
+  form_submit: "Envio de formulário",
+  first_visit: "Primeira visita",
+  select_item_specs: "Seleção de especificações",
+  click: "Clique",
+  view_filter: "Visualização de filtro",
+  file_download: "Download de arquivo",
+  select_filter: "Seleção de filtro",
+  select_top_bar: "Seleção da barra superior",
+  view_item_zoom: "Ampliação de imagem do produto",
+  add_to_cart: "Adição para orçamento",
+  view_cart: "Visualização da lista de orçamento",
+  select_footer: "Seleção no rodapé",
+  select_promotion: "Seleção de promoção",
+  begin_checkout: "Início da finalização (a revisar)",
+  purchase: "Finalização registrada (a validar)",
+  remove_from_cart: "Remoção da lista de orçamento",
+  add_to_wishlist: "Adição aos favoritos",
 };
 
 const translatedChannel = (name: string) =>
@@ -497,26 +1206,18 @@ const translatedDevice = (name: string) =>
   deviceNames[name.toLowerCase()] || name;
 
 const translatedEvent = (name: string) =>
-  eventNames[name] || name.replaceAll('_', ' ');
-
-const translatedLanding = (path: string) => {
-  if (!path || path === '(not set)') {
-    return 'Página de entrada não identificada';
-  }
-
-  return path;
-};
+  eventNames[name] || name.replaceAll("_", " ");
 
 function canonicalPath(path: string) {
-  const clean = path.split('?')[0];
-  const parts = clean.split('/').filter(Boolean);
+  const clean = path.split("?")[0];
+  const parts = clean.split("/").filter(Boolean);
   const out: string[] = [];
 
   for (const part of parts) {
     if (
       out.length &&
-      out[out.length - 1].toLocaleLowerCase('pt-BR') ===
-        part.toLocaleLowerCase('pt-BR')
+      out[out.length - 1].toLocaleLowerCase("pt-BR") ===
+        part.toLocaleLowerCase("pt-BR")
     ) {
       continue;
     }
@@ -524,7 +1225,7 @@ function canonicalPath(path: string) {
     out.push(part);
   }
 
-  return '/' + out.join('/');
+  return "/" + out.join("/");
 }
 
 function canonicalPages(
@@ -536,7 +1237,7 @@ function canonicalPages(
   for (const page of pages) {
     if (
       !page.path ||
-      page.path === '(not set)' ||
+      page.path === "(not set)" ||
       !isStorePath(page.path, store)
     ) {
       continue;
@@ -551,10 +1252,7 @@ function canonicalPages(
   }
 
   return [...grouped]
-    .map(([path, views]) => ({
-      path,
-      views,
-    }))
+    .map(([path, views]) => ({ path, views }))
     .sort((a, b) => b.views - a.views);
 }
 
@@ -567,23 +1265,20 @@ type Tree = {
 
 function makeTree(pages: Page[]) {
   const root: Tree = {
-    name: 'breton.co',
-    path: '/',
+    name: "breton.co",
+    path: "/",
     views: 0,
     children: new Map(),
   };
 
   for (const page of pages) {
-    if (
-      !page.path ||
-      page.path === '(not set)'
-    ) {
+    if (!page.path || page.path === "(not set)") {
       continue;
     }
 
     const parts = page.path
-      .split('?')[0]
-      .split('/')
+      .split("?")[0]
+      .split("/")
       .filter(Boolean);
 
     if (!parts.length) {
@@ -592,10 +1287,10 @@ function makeTree(pages: Page[]) {
     }
 
     let node = root;
-    let path = '';
+    let path = "";
 
     for (const part of parts) {
-      path += '/' + part;
+      path += "/" + part;
 
       if (!node.children.has(part)) {
         node.children.set(part, {
@@ -631,8 +1326,7 @@ function TreeNode({
       const sum = (item: Tree): number =>
         item.views +
         [...item.children.values()].reduce(
-          (total, child) =>
-            total + sum(child),
+          (total, child) => total + sum(child),
           0,
         );
 
@@ -651,16 +1345,14 @@ function TreeNode({
         <button
           className="tree-toggle"
           onClick={() => setOpen(!open)}
-          aria-label={
-            open ? 'Recolher' : 'Expandir'
-          }
+          aria-label={open ? "Recolher" : "Expandir"}
         >
           {children.length ? (
             <ChevronRight
               size={14}
               style={{
                 transform: open
-                  ? 'rotate(90deg)'
+                  ? "rotate(90deg)"
                   : undefined,
               }}
             />
@@ -677,11 +1369,7 @@ function TreeNode({
           {node.name}
         </button>
 
-        <span>
-          {node.views
-            ? fmt(node.views)
-            : ''}
-        </span>
+        <span>{node.views ? fmt(node.views) : ""}</span>
       </div>
 
       {open &&
@@ -698,8 +1386,8 @@ function TreeNode({
 }
 
 export default function Home() {
-  const [store, setStore] = useState<Store>('br');
-  const [tab, setTab] = useState('overview');
+  const [store, setStore] = useState<Store>("br");
+  const [tab, setTab] = useState("overview");
 
   const [start, setStart] = useState(
     snapshot.period.from,
@@ -710,13 +1398,13 @@ export default function Home() {
   );
 
   const [data, setData] = useState<Data>(base);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState("");
 
   const [sort, setSort] = useState<
-    'views' | 'quoteAdds'
-  >('views');
+    "views" | "quoteAdds"
+  >("views");
 
   const [menu, setMenu] = useState(false);
 
@@ -734,7 +1422,7 @@ export default function Home() {
   ) {
     if (!from || !to || from > to) {
       setError(
-        'A data inicial não pode ser posterior à final.',
+        "A data inicial não pode ser posterior à final.",
       );
       return;
     }
@@ -745,7 +1433,7 @@ export default function Home() {
     requestRef.current = controller;
 
     setLoading(true);
-    setError('');
+    setError("");
 
     try {
       const params = new URLSearchParams({
@@ -757,7 +1445,7 @@ export default function Home() {
       const res = await fetch(
         `/api/ga4?${params.toString()}`,
         {
-          cache: 'no-store',
+          cache: "no-store",
           signal: controller.signal,
         },
       );
@@ -765,9 +1453,7 @@ export default function Home() {
       const json = await res.json();
 
       if (!res.ok) {
-        throw Error(
-          json.error || 'Erro na consulta',
-        );
+        throw Error(json.error || "Erro na consulta");
       }
 
       if (!controller.signal.aborted) {
@@ -779,7 +1465,7 @@ export default function Home() {
       setError(
         err instanceof Error
           ? err.message
-          : 'Falha na consulta',
+          : "Falha na consulta",
       );
 
       setData(emptyData(selectedStore));
@@ -798,7 +1484,6 @@ export default function Home() {
     };
 
     // O período é aplicado pelo formulário.
-    // A troca de loja dispara nova consulta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store]);
 
@@ -813,7 +1498,7 @@ export default function Home() {
         ? data.pages.filter(
             (page) =>
               page.path &&
-              page.path !== '(not set)' &&
+              page.path !== "(not set)" &&
               isStorePath(page.path, store),
           )
         : canonicalPages(data.pages, store),
@@ -844,16 +1529,11 @@ export default function Home() {
               ?.toLowerCase()
               .includes(search) ||
             product.aliases?.some((alias) =>
-              alias
-                .toLowerCase()
-                .includes(search),
+              alias.toLowerCase().includes(search),
             )
           );
         })
-        .sort(
-          (a, b) =>
-            b[sort] - a[sort],
-        ),
+        .sort((a, b) => b[sort] - a[sort]),
     [data.products, q, sort],
   );
 
@@ -862,20 +1542,18 @@ export default function Home() {
     [sitePages],
   );
 
-  const siteComplete =
-    data.source === 'ga4-live';
+  const siteComplete = data.source === "ga4-live";
 
-  const current =
-    nav.find((item) => item.id === tab)!;
+  const current = nav.find(
+    (item) => item.id === tab,
+  )!;
 
   const currentStore = stores[store];
 
   const friendlyChannels = useMemo(
     () =>
       data.channels.map((channel) => ({
-        name: translatedChannel(
-          channel.name,
-        ),
+        name: translatedChannel(channel.name),
         value: channel.sessions,
       })),
     [data.channels],
@@ -887,7 +1565,8 @@ export default function Home() {
         .filter(
           (landing) =>
             landing.path &&
-            landing.path.trim().toLowerCase() !== '(not set)',
+            landing.path.trim().toLowerCase() !==
+              "(not set)",
         )
         .map((landing) => ({
           name: landing.path,
@@ -896,16 +1575,13 @@ export default function Home() {
     [data.landings],
   );
 
-  const channelSessions = (
-    ...names: string[]
-  ) =>
+  const channelSessions = (...names: string[]) =>
     data.channels
       .filter((channel) =>
         names.includes(channel.name),
       )
       .reduce(
-        (sum, channel) =>
-          sum + channel.sessions,
+        (sum, channel) => sum + channel.sessions,
         0,
       );
 
@@ -918,9 +1594,7 @@ export default function Home() {
         <thead>
           <tr>
             {headers.map((header) => (
-              <th key={header}>
-                {header}
-              </th>
+              <th key={header}>{header}</th>
             ))}
           </tr>
         </thead>
@@ -928,15 +1602,13 @@ export default function Home() {
         <tbody>
           {rows.map((row, index) => (
             <tr key={index}>
-              {row.map(
-                (cell, cellIndex) => (
-                  <td key={cellIndex}>
-                    {typeof cell === 'number'
-                      ? fmt(cell)
-                      : cell}
-                  </td>
-                ),
-              )}
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex}>
+                  {typeof cell === "number"
+                    ? fmt(cell)
+                    : cell}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>
@@ -945,50 +1617,90 @@ export default function Home() {
   );
 
   function render() {
-    if (tab === 'overview') {
+    if (tab === "overview") {
+      const comparison = data.comparison;
+
       return (
         <>
-          <div className="metrics">
-            <Card
-              label="Sessões"
-              value={
-                data.overview.sessions
-              }
-              detail="Visitas iniciadas ao site; uma pessoa pode gerar várias sessões."
-            />
+          {comparison ? (
+            <>
+              <div className="metrics">
+                <CompareCard
+                  label="Sessões"
+                  current={comparison.current.sessions}
+                  previous={comparison.previous.sessions}
+                  detail="Visitas iniciadas ao site."
+                />
 
-            <Card
-              label="Usuários ativos"
-              value={
-                data.overview.activeUsers
-              }
-              detail="Pessoas distintas que tiveram uma sessão engajada ou atividade reconhecida pelo GA4 no período."
-            />
+                <CompareCard
+                  label="Usuários ativos"
+                  current={comparison.current.activeUsers}
+                  previous={comparison.previous.activeUsers}
+                  detail="Usuários ativos no período."
+                />
 
-            <Card
-              label="Visualizações de páginas"
-              value={
-                data.overview.pageViews
-              }
-              detail="Quantidade de carregamentos de páginas, incluindo repetições."
-            />
+                <CompareCard
+                  label="Visualizações de páginas"
+                  current={comparison.current.pageViews}
+                  previous={comparison.previous.pageViews}
+                  detail="Visualizações registradas pelo GA4."
+                />
 
-            <Card
-              label="Adições para orçamento"
-              value={ev('add_to_cart')}
-            />
-          </div>
+                <CompareCard
+                  label="Adições para orçamento"
+                  current={comparison.current.quoteAdds}
+                  previous={comparison.previous.quoteAdds}
+                  detail="Evento add_to_cart."
+                />
+              </div>
+
+              {/* NOVO: explicação dinâmica logo abaixo dos cards */}
+              <PeriodComparisonExplanation
+                currentPeriod={data.period}
+                previousPeriod={data.previousPeriod}
+              />
+
+              <Section
+                title="Evolução do tráfego"
+                subtitle="Sessões diárias: período atual versus período anterior"
+              >
+                <DailyComparisonChart
+                  rows={data.dailyComparison || []}
+                  currentPeriod={data.period}
+                  previousPeriod={data.previousPeriod}
+                />
+              </Section>
+            </>
+          ) : (
+            <div className="metrics">
+              <Card
+                label="Sessões"
+                value={data.overview.sessions}
+              />
+
+              <Card
+                label="Usuários ativos"
+                value={data.overview.activeUsers}
+              />
+
+              <Card
+                label="Visualizações de páginas"
+                value={data.overview.pageViews}
+              />
+
+              <Card
+                label="Adições para orçamento"
+                value={ev("add_to_cart")}
+              />
+            </div>
+          )}
 
           <div className="two">
             <Section
               title="De onde vêm os visitantes?"
               subtitle="Sessões agrupadas pelo canal de origem."
             >
-              <Bars
-                items={
-                  friendlyChannels
-                }
-              />
+              <Bars items={friendlyChannels} />
             </Section>
 
             <Section
@@ -1008,51 +1720,34 @@ export default function Home() {
 
           <div className="three">
             <div className="mini">
-              <span>
-                Visualizações de produtos
-              </span>
+              <span>Visualizações de produtos</span>
+              <strong>{fmt(ev("view_item"))}</strong>
+            </div>
 
+            <div className="mini">
+              <span>Buscas internas</span>
               <strong>
-                {fmt(ev('view_item'))}
+                {fmt(ev("view_search_results"))}
               </strong>
             </div>
 
             <div className="mini">
-              <span>
-                Buscas internas
-              </span>
-
+              <span>Taxa de engajamento</span>
               <strong>
-                {fmt(
-                  ev('view_search_results'),
-                )}
-              </strong>
-            </div>
-
-            <div className="mini">
-              <span>
-                Taxa de engajamento
-              </span>
-
-              <strong>
-                {pct(
-                  data.overview
-                    .engagementRate,
-                )}
+                {pct(data.overview.engagementRate)}
               </strong>
 
               <small
                 style={{
-                  display: 'block',
+                  display: "block",
                   fontSize: 12,
                   lineHeight: 1.5,
                   marginTop: 8,
-                  color: '#777',
+                  color: "#777",
                 }}
               >
-                Sessões com mais de 10
-                segundos, 2 ou mais
-                páginas/telas ou um
+                Sessões com mais de 10 segundos,
+                2 ou mais páginas/telas ou um
                 evento principal.
               </small>
             </div>
@@ -1061,23 +1756,19 @@ export default function Home() {
       );
     }
 
-    if (tab === 'site') {
+    if (tab === "site") {
       return (
         <>
           <div className="metrics">
             <Card
               label="Caminhos no período"
-              value={
-                sitePages.length
-              }
+              value={sitePages.length}
               detail="Caminhos retornados pelo GA4 após os filtros do mapa."
             />
 
             <Card
               label="Visualizações de páginas"
-              value={
-                data.overview.pageViews
-              }
+              value={data.overview.pageViews}
               detail="Total do GA4, incluindo caminhos ocultados pelos filtros do mapa."
             />
 
@@ -1085,8 +1776,7 @@ export default function Home() {
               label="Página inicial"
               value={
                 sitePages.find(
-                  (page) =>
-                    page.path === '/',
+                  (page) => page.path === "/",
                 )?.views || 0
               }
             />
@@ -1113,9 +1803,7 @@ export default function Home() {
                     data.source +
                     start +
                     end +
-                    String(
-                      showRawPaths,
-                    )
+                    String(showRawPaths)
                   }
                   node={tree}
                   depth={0}
@@ -1129,7 +1817,7 @@ export default function Home() {
               subtitle={
                 siteComplete
                   ? `Páginas registradas na propriedade GA4 da loja ${currentStore.label}`
-                  : 'Dados indisponíveis para o período'
+                  : "Dados indisponíveis para o período"
               }
               right={
                 <button
@@ -1137,29 +1825,22 @@ export default function Home() {
                   onClick={() =>
                     csv(
                       `breton-${store}-paginas.csv`,
-                      pages.map(
-                        (page) => ({
-                          caminho:
-                            page.path,
-                          visualizacoes:
-                            page.views,
-                        }),
-                      ),
+                      pages.map((page) => ({
+                        caminho: page.path,
+                        visualizacoes: page.views,
+                      })),
                     )
                   }
                 >
-                  <Download
-                    size={15}
-                  />
+                  <Download size={15} />
                   CSV
                 </button>
               }
             >
               <label
                 style={{
-                  display: 'flex',
-                  alignItems:
-                    'center',
+                  display: "flex",
+                  alignItems: "center",
                   gap: 8,
                   marginBottom: 14,
                   fontSize: 13,
@@ -1167,111 +1848,77 @@ export default function Home() {
               >
                 <input
                   type="checkbox"
-                  checked={
-                    showRawPaths
-                  }
-                  onChange={(
-                    event,
-                  ) =>
+                  checked={showRawPaths}
+                  onChange={(event) =>
                     setShowRawPaths(
-                      event.target
-                        .checked,
+                      event.target.checked,
                     )
                   }
                 />
 
-                Exibir caminhos originais
-                do GA4 (sem consolidar
-                duplicações)
+                Exibir caminhos originais do GA4
+                (sem consolidar duplicações)
               </label>
 
               <div className="search">
-                <Search
-                  size={16}
-                />
+                <Search size={16} />
 
                 <input
                   value={q}
-                  onChange={(
-                    event,
-                  ) =>
-                    setQ(
-                      event.target
-                        .value,
-                    )
+                  onChange={(event) =>
+                    setQ(event.target.value)
                   }
                   placeholder={
-                    store === 'br'
-                      ? 'Buscar /area-externa, /corporativo, /designers...'
-                      : store === 'en'
-                        ? 'Buscar /indoor-area, /outdoor-area, /corporate...'
-                        : 'Buscar /zona-interior, /zona-exterior, /productos...'
+                    store === "br"
+                      ? "Buscar /area-externa, /corporativo, /designers..."
+                      : store === "en"
+                        ? "Buscar /indoor-area, /outdoor-area, /corporate..."
+                        : "Buscar /zona-interior, /zona-exterior, /productos..."
                   }
                 />
               </div>
 
               {table(
-                [
-                  'Caminho',
-                  'Visualizações',
-                ],
-                pages.map(
-                  (page) => [
-                    page.path,
-                    page.views,
-                  ],
-                ),
+                ["Caminho", "Visualizações"],
+                pages.map((page) => [
+                  page.path,
+                  page.views,
+                ]),
               )}
             </Section>
           </div>
 
           <p className="footnote">
-            O mapa mostra as URLs
-            registradas na propriedade
-            GA4 selecionada.
-            Na loja brasileira,
-            são priorizadas as rotas
-            em português. Na loja
-            inglesa, são preservadas
-            as rotas /indoor-area,
-            /outdoor-area e /corporate.
-            Na loja espanhola,
-            são preservadas as rotas
-            /zona-interior e
-            /zona-exterior.
-            As URLs de produtos são
-            mantidas. O mapa representa
-            caminhos com visualizações
-            no período, não o sitemap
-            de produção. URLs sem
-            tráfego não aparecem.
-            Segmentos consecutivos
-            repetidos são consolidados
-            por padrão; ative os
-            caminhos originais para
-            investigar duplicações.
+            O mapa mostra as URLs registradas na
+            propriedade GA4 selecionada. As URLs
+            de produtos são mantidas. O mapa
+            representa caminhos com visualizações
+            no período, não o sitemap de produção.
+            URLs sem tráfego não aparecem.
+            Segmentos consecutivos repetidos são
+            consolidados por padrão; ative os
+            caminhos originais para investigar
+            duplicações.
           </p>
         </>
       );
     }
 
-    if (tab === 'acquisition') {
+    if (tab === "acquisition") {
       return (
         <>
           <div className="metrics">
             <Card
               label="Sessões"
-              value={
-                data.overview.sessions
-              }
+              value={data.overview.sessions}
               detail="Total de visitas iniciadas no período."
             />
 
             <Card
               label="Pesquisa orgânica"
               value={channelSessions(
-                'Organic Search',
-                'Busca orgânica',
+                "Organic Search",
+                "Busca orgânica",
               )}
               detail="Visitas provenientes de resultados não pagos de buscadores."
             />
@@ -1279,8 +1926,8 @@ export default function Home() {
             <Card
               label="Acesso direto"
               value={channelSessions(
-                'Direct',
-                'Acesso direto',
+                "Direct",
+                "Acesso direto",
               )}
               detail="Visitas classificadas pelo GA4 como acesso direto."
             />
@@ -1288,8 +1935,8 @@ export default function Home() {
             <Card
               label="Origem não identificada"
               value={channelSessions(
-                '(not set)',
-                'Origem não identificada',
+                "(not set)",
+                "Origem não identificada",
               )}
               detail="Sessões sem valor de canal informado pelo GA4."
             />
@@ -1300,72 +1947,56 @@ export default function Home() {
               title="De onde vêm os visitantes?"
               subtitle="Sessões por canal de aquisição."
             >
-              <Bars
-                items={
-                  friendlyChannels
-                }
-              />
+              <Bars items={friendlyChannels} />
             </Section>
 
             <Section
               title="Por quais páginas os visitantes chegam?"
-              subtitle="áginas de entrada identificadas pelo Google Analytics, ordenadas pelo número de sessões."
+              subtitle="Páginas de entrada identificadas pelo Google Analytics, ordenadas pelo número de sessões."
             >
-              <Bars
-                items={
-                  friendlyLandings
-                }
-              />
+              <Bars items={friendlyLandings} />
             </Section>
           </div>
 
           <p className="footnote">
-            Os canais representam
-            a classificação de
-            aquisição de sessões
-            do Google Analytics 4.
-            “Canal não classificado”
-            e “Origem não identificada”
-            são situações distintas
-            e permanecem contabilizadas.
-            Os nomes foram traduzidos
-            apenas para facilitar
-            a leitura do relatório.
+            Os canais representam a classificação
+            de aquisição de sessões do Google
+            Analytics 4. “Canal não classificado”
+            e “Origem não identificada” são
+            situações distintas e permanecem
+            contabilizadas nos dados de aquisição.
+            Os nomes foram traduzidos apenas
+            para facilitar a leitura do relatório.
+            Caminhos não identificados são
+            excluídos exclusivamente do gráfico
+            de páginas de entrada.
           </p>
         </>
       );
     }
 
-    if (tab === 'products') {
+    if (tab === "products") {
       return (
         <>
           <div className="metrics">
             <Card
               label="Visualizações de produtos"
-              value={
-                ev('view_item')
-              }
+              value={ev("view_item")}
             />
 
             <Card
               label="Seleções em listas"
-              value={
-                ev('select_item')
-              }
+              value={ev("select_item")}
             />
 
             <Card
               label="Adições para orçamento"
-              value={
-                ev('add_to_cart')
-              }
+              value={ev("add_to_cart")}
             />
 
             <Card
               label="Produtos no relatório"
-              value={
-                data.products.length
-              }
+              value={data.products.length}
             />
           </div>
 
@@ -1378,50 +2009,32 @@ export default function Home() {
                 onClick={() =>
                   csv(
                     `breton-${store}-produtos.csv`,
-                    products.map(
-                      (product) => ({
-                        item_id:
-                          product.itemId ||
-                          '',
-                        produto:
-                          product.name,
-                        nomes_alternativos:
-                          product.aliases
-                            ?.join(
-                              ' | ',
-                            ) ||
-                          '',
-                        visualizacoes:
-                          product.views,
-                        adicoes_orcamento:
-                          product.quoteAdds,
-                      }),
-                    ),
+                    products.map((product) => ({
+                      item_id: product.itemId || "",
+                      produto: product.name,
+                      nomes_alternativos:
+                        product.aliases?.join(" | ") ||
+                        "",
+                      visualizacoes: product.views,
+                      adicoes_orcamento:
+                        product.quoteAdds,
+                    })),
                   )
                 }
               >
-                <Download
-                  size={15}
-                />
+                <Download size={15} />
                 CSV
               </button>
             }
           >
             <div className="toolbar">
               <div className="search">
-                <Search
-                  size={16}
-                />
+                <Search size={16} />
 
                 <input
                   value={q}
-                  onChange={(
-                    event,
-                  ) =>
-                    setQ(
-                      event.target
-                        .value,
-                    )
+                  onChange={(event) =>
+                    setQ(event.target.value)
                   }
                   placeholder="Pesquisar produto"
                 />
@@ -1431,91 +2044,70 @@ export default function Home() {
                 className="sort"
                 onClick={() =>
                   setSort(
-                    sort ===
-                      'views'
-                      ? 'quoteAdds'
-                      : 'views',
+                    sort === "views"
+                      ? "quoteAdds"
+                      : "views",
                   )
                 }
               >
-                <ArrowDownUp
-                  size={15}
-                />
+                <ArrowDownUp size={15} />
 
-                {sort ===
-                'views'
-                  ? 'Mais visualizados'
-                  : 'Mais adicionados'}
+                {sort === "views"
+                  ? "Mais visualizados"
+                  : "Mais adicionados"}
               </button>
             </div>
 
             {table(
               [
-                'Produto',
-                'Visualizações',
-                'Adições para orçamento',
-                'Adições / visualizações*',
+                "Produto",
+                "Visualizações",
+                "Adições para orçamento",
+                "Adições / visualizações*",
               ],
-              products.map(
-                (product) => [
-                  product.name,
-                  product.views,
-                  product.quoteAdds,
-                  product.views
-                    ? pct(
-                        product.quoteAdds /
-                          product.views,
-                      )
-                    : 'Não calculável',
-                ],
-              ),
+              products.map((product) => [
+                product.name,
+                product.views,
+                product.quoteAdds,
+                product.views
+                  ? pct(
+                      product.quoteAdds /
+                        product.views,
+                    )
+                  : "Não calculável",
+              ]),
             )}
 
             <p className="footnote">
-              * Razão entre contagens
-              de eventos, não conversão
-              de pessoas. Quando há
-              zero visualizações, a
-              razão não pode ser
-              calculada. Adições sem
-              visualizações podem
-              indicar diferenças no
-              rastreamento dos eventos
-              view_item e add_to_cart.
-              Nomes alternativos
-              associados ao mesmo
-              identificador são
-              consolidados pela API.
-              Produtos de lojas
-              diferentes não são
-              misturados.
+              * Razão entre contagens de eventos,
+              não conversão de pessoas. Quando há
+              zero visualizações, a razão não pode
+              ser calculada. Adições sem
+              visualizações podem indicar
+              diferenças no rastreamento dos
+              eventos view_item e add_to_cart.
+              Nomes alternativos associados ao
+              mesmo identificador são consolidados
+              pela API. Produtos de lojas
+              diferentes não são misturados.
             </p>
           </Section>
         </>
       );
     }
 
-    if (tab === 'funnel') {
+    if (tab === "funnel") {
       const funnelEvents = [
+        ["Visualização de produto", "view_item"],
+        ["Adição para orçamento", "add_to_cart"],
+        ["Visualização do carrinho", "view_cart"],
         [
-          'Visualização de produto',
-          'view_item',
+          "Início do checkout (a revisar)",
+          "begin_checkout",
         ],
         [
-          'Adição para orçamento',
-          'add_to_cart',
-        ],
-        [
-          'Visualização do carrinho',
-          'view_cart',
-        ],
-        [
-          'Início do checkout (a revisar)',
-          'begin_checkout',
-        ],
-        [
-          'Finalização registrada (a validar)',
-          'purchase',
+          "Finalização registrada (a validar)",
+          "purchase",
         ],
       ];
 
@@ -1524,30 +2116,22 @@ export default function Home() {
           <div className="metrics">
             <Card
               label="Visualizações de produto"
-              value={
-                ev('view_item')
-              }
+              value={ev("view_item")}
             />
 
             <Card
               label="Adições para orçamento"
-              value={
-                ev('add_to_cart')
-              }
+              value={ev("add_to_cart")}
             />
 
             <Card
               label="Visualizações do carrinho"
-              value={
-                ev('view_cart')
-              }
+              value={ev("view_cart")}
             />
 
             <Card
               label="Inícios de finalização"
-              value={
-                ev('begin_checkout')
-              }
+              value={ev("begin_checkout")}
               detail="Evento begin_checkout do GA4. Sua correspondência com o fluxo de orçamento ainda precisa ser validada."
             />
           </div>
@@ -1558,17 +2142,13 @@ export default function Home() {
           >
             <div className="funnel">
               {funnelEvents.map(
-                (
-                  [label, event],
-                  index,
-                ) => (
+                ([label, event], index) => (
                   <div
                     className="funnel-row"
                     key={event}
                   >
                     <div className="funnel-num">
-                      0
-                      {index + 1}
+                      0{index + 1}
                     </div>
 
                     <div className="funnel-body">
@@ -1577,36 +2157,26 @@ export default function Home() {
                           {label}
 
                           <small>
-                            {translatedEvent(
-                              event,
-                            )}
+                            {translatedEvent(event)}
                           </small>
                         </span>
 
-                        <b>
-                          {fmt(
-                            ev(
-                              event,
-                            ),
-                          )}
-                        </b>
+                        <b>{fmt(ev(event))}</b>
                       </div>
 
                       <div className="funnel-track">
                         <div
                           style={{
-                            width: `${Math.max(
-                              1,
-                              (100 *
-                                ev(
-                                  event,
-                                )) /
-                                Math.max(
-                                  1,
-                                  ev(
-                                    'view_item',
+                            width: `${Math.min(
+                              100,
+                              Math.max(
+                                0,
+                                (100 * ev(event)) /
+                                  Math.max(
+                                    1,
+                                    ev("view_item"),
                                   ),
-                                ),
+                              ),
                             )}%`,
                           }}
                         />
@@ -1618,34 +2188,22 @@ export default function Home() {
             </div>
 
             <div className="note">
-              <Info
-                size={17}
-              />
+              <Info size={17} />
 
               <span>
-                O botão “Solicitar
-                orçamento” dispara
-                o evento add_to_cart,
-                mas isso não comprova
-                o envio de um orçamento.
-
-                <strong>
-                  {' '}
-                  A revisar:{' '}
-                </strong>
-
-                begin_checkout indica
-                o início de uma etapa
-                de finalização
-                registrada no GA4,
-                enquanto purchase
-                indica uma finalização
-                registrada.
-                Precisamos validar
-                quais ações reais da
-                loja selecionada
-                disparam esses eventos
-                antes de considerá-los
+                O botão “Solicitar orçamento”
+                dispara o evento add_to_cart,
+                mas isso não comprova o envio
+                de um orçamento.
+                <strong> A revisar: </strong>
+                begin_checkout indica o início
+                de uma etapa de finalização
+                registrada no GA4, enquanto
+                purchase indica uma finalização
+                registrada. Precisamos validar
+                quais ações reais da loja
+                selecionada disparam esses
+                eventos antes de considerá-los
                 orçamentos concluídos.
               </span>
             </div>
@@ -1654,36 +2212,28 @@ export default function Home() {
       );
     }
 
-    if (tab === 'events') {
+    if (tab === "events") {
       return (
         <>
           <div className="metrics">
             <Card
               label="Tipos de evento"
-              value={
-                data.events.length
-              }
+              value={data.events.length}
             />
 
             <Card
               label="Arquivos baixados"
-              value={
-                ev('file_download')
-              }
+              value={ev("file_download")}
             />
 
             <Card
               label="Interações com filtros"
-              value={
-                ev('select_filter')
-              }
+              value={ev("select_filter")}
             />
 
             <Card
               label="Zoom de produto"
-              value={
-                ev('view_item_zoom')
-              }
+              value={ev("view_item_zoom")}
             />
           </div>
 
@@ -1696,49 +2246,30 @@ export default function Home() {
                 onClick={() =>
                   csv(
                     `breton-${store}-eventos.csv`,
-                    data.events.map(
-                      (event) => ({
-                        evento:
-                          translatedEvent(
-                            event.name,
-                          ),
-                        identificador_ga4:
-                          event.name,
-                        ocorrencias:
-                          event.count,
-                      }),
-                    ),
+                    data.events.map((event) => ({
+                      evento: translatedEvent(
+                        event.name,
+                      ),
+                      identificador_ga4:
+                        event.name,
+                      ocorrencias: event.count,
+                    })),
                   )
                 }
               >
-                <Download
-                  size={15}
-                />
+                <Download size={15} />
                 CSV
               </button>
             }
           >
             {table(
-              [
-                'Evento',
-                'Ocorrências',
-              ],
-              [
-                ...data.events,
-              ]
-                .sort(
-                  (a, b) =>
-                    b.count -
-                    a.count,
-                )
-                .map(
-                  (event) => [
-                    translatedEvent(
-                      event.name,
-                    ),
-                    event.count,
-                  ],
-                ),
+              ["Evento", "Ocorrências"],
+              [...data.events]
+                .sort((a, b) => b.count - a.count)
+                .map((event) => [
+                  translatedEvent(event.name),
+                  event.count,
+                ]),
             )}
           </Section>
         </>
@@ -1750,25 +2281,20 @@ export default function Home() {
         <div className="metrics">
           <Card
             label="Usuários ativos"
-            value={
-              data.overview.activeUsers
-            }
+            value={data.overview.activeUsers}
             detail="Pessoas distintas que tiveram uma sessão engajada ou atividade reconhecida pelo GA4 no período."
           />
 
           <Card
             label="Sessões engajadas"
-            value={
-              data.overview.engagedSessions
-            }
+            value={data.overview.engagedSessions}
             detail="Visitas que atenderam a pelo menos um critério de engajamento do GA4."
           />
 
           <Card
             label="Taxa de engajamento"
             value={pct(
-              data.overview
-                .engagementRate,
+              data.overview.engagementRate,
             )}
             detail="Percentual de sessões com mais de 10 segundos, 2 ou mais páginas/telas ou um evento principal configurado no GA4."
           />
@@ -1776,9 +2302,7 @@ export default function Home() {
           <Card
             label="Duração média da sessão"
             value={`${(
-              data.overview
-                .avgSessionSeconds /
-              60
+              data.overview.avgSessionSeconds / 60
             ).toFixed(1)} min`}
           />
         </div>
@@ -1786,29 +2310,21 @@ export default function Home() {
         <div className="two">
           <Section title="Dispositivos">
             <Bars
-              items={data.devices.map(
-                (device) => ({
-                  name:
-                    translatedDevice(
-                      device.name,
-                    ),
-                  value:
-                    device.sessions,
-                }),
-              )}
+              items={data.devices.map((device) => ({
+                name: translatedDevice(
+                  device.name,
+                ),
+                value: device.sessions,
+              }))}
             />
           </Section>
 
           <Section title="Países">
             <Bars
-              items={data.countries.map(
-                (country) => ({
-                  name:
-                    country.name,
-                  value:
-                    country.sessions,
-                }),
-              )}
+              items={data.countries.map((country) => ({
+                name: country.name,
+                value: country.sessions,
+              }))}
             />
           </Section>
         </div>
@@ -1820,23 +2336,15 @@ export default function Home() {
     <div className="app">
       <aside
         className={
-          'sidebar ' +
-          (menu ? 'open' : '')
+          "sidebar " + (menu ? "open" : "")
         }
       >
         <div className="brand">
-          <div className="brand-mark">
-            B
-          </div>
+          <div className="brand-mark">B</div>
 
           <div>
-            <strong>
-              BRETON
-            </strong>
-
-            <small>
-              INTELLIGENCE
-            </small>
+            <strong>BRETON</strong>
+            <small>INTELLIGENCE</small>
           </div>
         </div>
 
@@ -1850,29 +2358,17 @@ export default function Home() {
 
             return (
               <button
-                key={
-                  item.id
-                }
+                key={item.id}
                 className={
-                  tab ===
-                  item.id
-                    ? 'active'
-                    : ''
+                  tab === item.id ? "active" : ""
                 }
                 onClick={() => {
-                  setTab(
-                    item.id,
-                  );
-                  setQ('');
-                  setMenu(
-                    false,
-                  );
+                  setTab(item.id);
+                  setQ("");
+                  setMenu(false);
                 }}
               >
-                <Icon
-                  size={18}
-                />
-
+                <Icon size={18} />
                 {item.label}
               </button>
             );
@@ -1887,9 +2383,7 @@ export default function Home() {
               Google Analytics · Breton
             </strong>
 
-            <small>
-              {currentStore.domain}
-            </small>
+            <small>{currentStore.domain}</small>
           </div>
         </div>
       </aside>
@@ -1898,28 +2392,16 @@ export default function Home() {
         <header className="topbar">
           <button
             className="mobile-menu"
-            onClick={() =>
-              setMenu(
-                !menu,
-              )
-            }
+            onClick={() => setMenu(!menu)}
             aria-label="Abrir menu"
           >
-            <Menu
-              size={21}
-            />
+            <Menu size={21} />
           </button>
 
           <div className="breadcrumb">
             Análises
-
-            <ChevronRight
-              size={15}
-            />
-
-            <span>
-              {current.label}
-            </span>
+            <ChevronRight size={15} />
+            <span>{current.label}</span>
           </div>
 
           <div className="topright">
@@ -1927,11 +2409,10 @@ export default function Home() {
               <span />
 
               {loading
-                ? 'Consultando GA4'
-                : data.source ===
-                    'ga4-live'
-                  ? 'Dados atualizados do GA4'
-                  : 'Sem dados'}
+                ? "Consultando GA4"
+                : data.source === "ga4-live"
+                  ? "Dados atualizados do GA4"
+                  : "Sem dados"}
             </span>
           </div>
         </header>
@@ -1943,29 +2424,22 @@ export default function Home() {
                 BRETON / DESEMPENHO DIGITAL
               </div>
 
-              <h1>
-                {current.label}
-              </h1>
+              <h1>{current.label}</h1>
 
               <p>
                 {currentStore.domain}
-                {' · '}
-                Propriedade GA4{' '}
-                {
-                  currentStore.property
-                }
+                {" · "}
+                Propriedade GA4{" "}
+                {currentStore.property}
               </p>
             </div>
           </div>
 
           <div
             style={{
-              display:
-                'flex',
-              flexWrap:
-                'wrap',
-              alignItems:
-                'center',
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
               gap: 12,
               marginBottom: 20,
             }}
@@ -1981,100 +2455,60 @@ export default function Home() {
 
             <div
               style={{
-                display: 'flex',
-                flexWrap: 'wrap',
+                display: "flex",
+                flexWrap: "wrap",
                 gap: 4,
                 padding: 4,
-                border:
-                  '1px solid #e5e0df',
+                border: "1px solid #e5e0df",
                 borderRadius: 10,
               }}
             >
               {(
                 [
-                  [
-                    'br',
-                    'Brasil',
-                  ],
-                  [
-                    'en',
-                    'Inglês',
-                  ],
-                  [
-                    'es',
-                    'Espanhol',
-                  ],
+                  ["br", "Brasil"],
+                  ["en", "Inglês"],
+                  ["es", "Espanhol"],
                 ] as const
-              ).map(
-                ([
-                  value,
-                  label,
-                ]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={
-                      store ===
-                      value
-                    }
-                    onClick={() => {
-                      if (
-                        store ===
-                        value
-                      ) {
-                        return;
-                      }
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={store === value}
+                  onClick={() => {
+                    if (store === value) return;
 
-                      setData(
-                        emptyData(
-                          value,
-                        ),
-                      );
-                      setError(
-                        '',
-                      );
-                      setLoading(
-                        true,
-                      );
-                      setQ(
-                        '',
-                      );
-                      setStore(
-                        value,
-                      );
-                    }}
-                    style={{
-                      border:
-                        'none',
-                      borderRadius: 7,
-                      padding:
-                        '9px 18px',
-                      cursor:
-                        'pointer',
-                      fontWeight: 600,
-                      fontSize: 13,
-                      background:
-                        store ===
-                        value
-                          ? '#7e2a43'
-                          : 'transparent',
-                      color:
-                        store ===
-                        value
-                          ? '#ffffff'
-                          : 'inherit',
-                    }}
-                  >
-                    {label}
-                  </button>
-                ),
-              )}
+                    setData(emptyData(value));
+                    setError("");
+                    setLoading(true);
+                    setQ("");
+                    setStore(value);
+                  }}
+                  style={{
+                    border: "none",
+                    borderRadius: 7,
+                    padding: "9px 18px",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    background:
+                      store === value
+                        ? "#7e2a43"
+                        : "transparent",
+                    color:
+                      store === value
+                        ? "#ffffff"
+                        : "inherit",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
             <span
               style={{
                 fontSize: 12,
-                color: '#777',
+                color: "#777",
               }}
             >
               {currentStore.domain}
@@ -2083,86 +2517,56 @@ export default function Home() {
 
           <form
             className="date-controls"
-            onSubmit={(
-              event,
-            ) => {
+            onSubmit={(event) => {
               event.preventDefault();
-
-              setQ('');
-
-              load(
-                store,
-                start,
-                end,
-              );
+              setQ("");
+              load(store, start, end);
             }}
           >
-            <CalendarDays
-              size={17}
-            />
+            <CalendarDays size={17} />
 
             <label>
               De
-
               <input
                 aria-label="Data inicial"
                 type="date"
                 value={start}
                 max={end}
-                onChange={(
-                  event,
-                ) =>
-                  setStart(
-                    event.target
-                      .value,
-                  )
+                onChange={(event) =>
+                  setStart(event.target.value)
                 }
               />
             </label>
 
             <label>
               Até
-
               <input
                 aria-label="Data final"
                 type="date"
                 value={end}
                 min={start}
-                onChange={(
-                  event,
-                ) =>
-                  setEnd(
-                    event.target
-                      .value,
-                  )
+                onChange={(event) =>
+                  setEnd(event.target.value)
                 }
               />
             </label>
 
             <button
-              disabled={
-                loading
-              }
+              disabled={loading}
               type="submit"
             >
               {loading
-                ? 'Consultando...'
-                : 'Aplicar período'}
+                ? "Consultando..."
+                : "Aplicar período"}
             </button>
           </form>
 
-          {!loading &&
-            error && (
-              <div className="note">
-                <Info
-                  size={17}
-                />
-
-                <span>
-                  {error}
-                </span>
-              </div>
-            )}
+          {!loading && error && (
+            <div className="note">
+              <Info size={17} />
+              <span>{error}</span>
+            </div>
+          )}
 
           {loading ? (
             <div
@@ -2170,22 +2574,17 @@ export default function Home() {
               aria-live="polite"
               style={{
                 minHeight: 320,
-                display:
-                  'flex',
-                flexDirection:
-                  'column',
-                alignItems:
-                  'center',
-                justifyContent:
-                  'center',
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
                 gap: 16,
-                color:
-                  '#7e2a43',
+                color: "#7e2a43",
               }}
             >
               <style>
                 {
-                  '@keyframes bretonSpin {to {transform:rotate(360deg)}}'
+                  "@keyframes bretonSpin {to {transform:rotate(360deg)}}"
                 }
               </style>
 
@@ -2193,41 +2592,34 @@ export default function Home() {
                 size={36}
                 style={{
                   animation:
-                    'bretonSpin 1s linear infinite',
+                    "bretonSpin 1s linear infinite",
                 }}
               />
 
               <strong>
-                Buscando dados do
-                Google Analytics...
+                Buscando dados do Google
+                Analytics...
               </strong>
 
               <span
                 style={{
-                  color:
-                    '#777',
+                  color: "#777",
                   fontSize: 13,
                 }}
               >
-                Consultando a loja{' '}
-                {
-                  currentStore.label
-                }
-                . Aguarde.
+                Consultando a loja{" "}
+                {currentStore.label}. Aguarde.
               </span>
             </div>
-          ) : data.source ===
-            'unavailable' ? (
+          ) : data.source === "unavailable" ? (
             <Section
               title="Sem dados para este período"
               subtitle={`Não foi possível consultar a propriedade GA4 ${currentStore.property}.`}
             >
               <p>
-                Verifique as credenciais
-                da conta de serviço e
-                a permissão de Leitor
-                na propriedade
-                selecionada.
+                Verifique as credenciais da conta
+                de serviço e a permissão de Leitor
+                na propriedade selecionada.
               </p>
             </Section>
           ) : (
@@ -2236,14 +2628,12 @@ export default function Home() {
 
           <footer>
             Breton Intelligence
-            {' · '}
-
+            {" · "}
             {loading
-              ? 'Consultando dados...'
-              : data.source ===
-                  'ga4-live'
+              ? "Consultando dados..."
+              : data.source === "ga4-live"
                 ? `${currentStore.label} · ${start} a ${end}`
-                : 'Consulta indisponível'}
+                : "Consulta indisponível"}
           </footer>
         </div>
       </main>
@@ -2251,11 +2641,7 @@ export default function Home() {
       {menu && (
         <div
           className="scrim"
-          onClick={() =>
-            setMenu(
-              false,
-            )
-          }
+          onClick={() => setMenu(false)}
         />
       )}
     </div>
