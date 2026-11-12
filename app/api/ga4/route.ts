@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { BetaAnalyticsDataClient } from "@google-analytics/data";
+import { isAuthenticated } from "../../../lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,10 @@ const properties: Record<Store, string> = {
   br: "494454950",
   en: "494483822",
   es: "494471953",
+};
+
+const NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
 };
 
 type ReportRow = {
@@ -110,6 +115,7 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
     }
 
     const product = grouped.get(key)!;
+
     const views = row.metrics[0] || 0;
     const quoteAdds = row.metrics[1] || 0;
 
@@ -171,6 +177,7 @@ function overviewFromRows(rows: ReportRow[]) {
 
 function dateRangeDays(from: string, to: string) {
   const result: string[] = [];
+
   const current = parseDate(from)!;
   const last = parseDate(to)!;
 
@@ -202,6 +209,18 @@ function formatDailyRows(
 }
 
 export async function GET(req: NextRequest) {
+  // Proteção independente do proxy.ts.
+  // Sem sessão válida, nenhuma consulta ao GA4 é executada.
+  if (!isAuthenticated(req)) {
+    return NextResponse.json(
+      { error: "Não autorizado." },
+      {
+        status: 401,
+        headers: NO_STORE_HEADERS,
+      },
+    );
+  }
+
   const requestedStore =
     req.nextUrl.searchParams.get("store") || "br";
 
@@ -212,7 +231,10 @@ export async function GET(req: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Loja inválida. Utilize br, en ou es." },
-      { status: 400 },
+      {
+        status: 400,
+        headers: NO_STORE_HEADERS,
+      },
     );
   }
 
@@ -231,7 +253,10 @@ export async function GET(req: NextRequest) {
   if (!startDate || !endDate || startDate > endDate) {
     return NextResponse.json(
       { error: "Período inválido." },
-      { status: 400 },
+      {
+        status: 400,
+        headers: NO_STORE_HEADERS,
+      },
     );
   }
 
@@ -245,7 +270,10 @@ export async function GET(req: NextRequest) {
         error:
           "Conexão GA4 não configurada. Defina GA4_SERVICE_ACCOUNT_JSON.",
       },
-      { status: 503 },
+      {
+        status: 503,
+        headers: NO_STORE_HEADERS,
+      },
     );
   }
 
@@ -423,6 +451,7 @@ export async function GET(req: NextRequest) {
     ]);
 
     const overview = overviewFromRows(totals);
+
     const previousOverview =
       overviewFromRows(previousTotals);
 
@@ -470,82 +499,88 @@ export async function GET(req: NextRequest) {
         (row) => row.dimensions[0] === "add_to_cart",
       )?.metrics[0] || 0;
 
-    return NextResponse.json({
-      source: "ga4-live",
-      store,
-      property,
+    return NextResponse.json(
+      {
+        source: "ga4-live",
+        store,
+        property,
 
-      period: {
-        from: start,
-        to: end,
-      },
-
-      previousPeriod: {
-        from: previousPeriod.from,
-        to: previousPeriod.to,
-      },
-
-      overview,
-
-      previousOverview,
-
-      comparison: {
-        current: {
-          sessions: overview.sessions,
-          activeUsers: overview.activeUsers,
-          pageViews: overview.pageViews,
-          quoteAdds: eventCount("add_to_cart"),
+        period: {
+          from: start,
+          to: end,
         },
-        previous: {
-          sessions: previousOverview.sessions,
-          activeUsers: previousOverview.activeUsers,
-          pageViews: previousOverview.pageViews,
-          quoteAdds: previousQuoteAdds,
+
+        previousPeriod: {
+          from: previousPeriod.from,
+          to: previousPeriod.to,
         },
-      },
 
-      dailyComparison,
+        overview,
 
-      pages: paths
-        .map((row) => ({
-          path: row.dimensions[0],
-          views: row.metrics[0],
-        }))
-        .sort((a, b) => b.views - a.views),
+        previousOverview,
 
-      events: events.map((row) => ({
-        name: row.dimensions[0],
-        count: row.metrics[0],
-      })),
+        comparison: {
+          current: {
+            sessions: overview.sessions,
+            activeUsers: overview.activeUsers,
+            pageViews: overview.pageViews,
+            quoteAdds: eventCount("add_to_cart"),
+          },
 
-      channels: channels
-        .map((row) => ({
+          previous: {
+            sessions: previousOverview.sessions,
+            activeUsers: previousOverview.activeUsers,
+            pageViews: previousOverview.pageViews,
+            quoteAdds: previousQuoteAdds,
+          },
+        },
+
+        dailyComparison,
+
+        pages: paths
+          .map((row) => ({
+            path: row.dimensions[0],
+            views: row.metrics[0],
+          }))
+          .sort((a, b) => b.views - a.views),
+
+        events: events.map((row) => ({
+          name: row.dimensions[0],
+          count: row.metrics[0],
+        })),
+
+        channels: channels
+          .map((row) => ({
+            name: row.dimensions[0],
+            sessions: row.metrics[0],
+          }))
+          .sort((a, b) => b.sessions - a.sessions),
+
+        devices: devices.map((row) => ({
           name: row.dimensions[0],
           sessions: row.metrics[0],
-        }))
-        .sort((a, b) => b.sessions - a.sessions),
+        })),
 
-      devices: devices.map((row) => ({
-        name: row.dimensions[0],
-        sessions: row.metrics[0],
-      })),
+        countries: countries
+          .map((row) => ({
+            name: row.dimensions[0],
+            sessions: row.metrics[0],
+          }))
+          .sort((a, b) => b.sessions - a.sessions),
 
-      countries: countries
-        .map((row) => ({
-          name: row.dimensions[0],
-          sessions: row.metrics[0],
-        }))
-        .sort((a, b) => b.sessions - a.sessions),
+        landings: landings
+          .map((row) => ({
+            path: row.dimensions[0],
+            sessions: row.metrics[0],
+          }))
+          .sort((a, b) => b.sessions - a.sessions),
 
-      landings: landings
-        .map((row) => ({
-          path: row.dimensions[0],
-          sessions: row.metrics[0],
-        }))
-        .sort((a, b) => b.sessions - a.sessions),
-
-      products: groupProducts(items),
-    });
+        products: groupProducts(items),
+      },
+      {
+        headers: NO_STORE_HEADERS,
+      },
+    );
   } catch (error) {
     console.error(
       `GA4 error - store=${store}, property=${property}`,
@@ -557,7 +592,10 @@ export async function GET(req: NextRequest) {
         error:
           "Falha na consulta GA4. Verifique as permissões, credenciais e o período selecionado.",
       },
-      { status: 502 },
+      {
+        status: 502,
+        headers: NO_STORE_HEADERS,
+      },
     );
   }
 }

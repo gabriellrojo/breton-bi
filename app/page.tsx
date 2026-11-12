@@ -29,7 +29,6 @@ import {
   Minus,
 } from "lucide-react";
 
-import * as snapshot from "@/lib/snapshot";
 
 type Store = "br" | "en" | "es";
 
@@ -159,27 +158,6 @@ function emptyData(store: Store): Data {
     landings: [],
   };
 }
-
-const base: Data = {
-  source: "snapshot",
-  store: "br",
-  property: stores.br.property,
-  overview: {
-    sessions: snapshot.overview.sessionsDailySum,
-    activeUsers: snapshot.overview.activeUsers,
-    pageViews: snapshot.overview.pageViews,
-    engagedSessions: snapshot.overview.engagedSessions,
-    engagementRate: snapshot.overview.engagementRate,
-    avgSessionSeconds: snapshot.overview.avgSessionSeconds,
-  },
-  pages: snapshot.pages,
-  products: snapshot.products,
-  events: snapshot.events,
-  channels: snapshot.channels,
-  devices: snapshot.devices,
-  countries: snapshot.countries,
-  landings: snapshot.landings,
-};
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("pt-BR").format(n);
@@ -1390,14 +1368,14 @@ export default function Home() {
   const [tab, setTab] = useState("overview");
 
   const [start, setStart] = useState(
-    snapshot.period.from,
+    "2026-08-11",
   );
 
   const [end, setEnd] = useState(
-    snapshot.period.to,
+    "2026-11-08",
   );
 
-  const [data, setData] = useState<Data>(base);
+  const [data, setData] = useState<Data>(() => emptyData("br"));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");

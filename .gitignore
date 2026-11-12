@@ -13,3 +13,4 @@ breton-bi-*.json
 # Arquivos do macOS
 .DS_Store
 
+.vercel
