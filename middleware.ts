@@ -4,12 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   isAuthenticated,
   SESSION_COOKIE,
-  sessionCookieOptions,
 } from "./lib/auth";
 
-export async function middleware(
-  request: NextRequest
-) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const authenticated = await isAuthenticated(request);
@@ -57,11 +54,9 @@ export async function middleware(
     return response;
   }
 
-  const response = NextResponse.next();
-
-  // Mantém a sessão existente, sem renovar o
-  // prazo de expiração a cada requisição.
-  return response;
+  // Mantém a sessão existente, sem renovar
+  // o prazo de expiração a cada requisição.
+  return NextResponse.next();
 }
 
 export const config = {
