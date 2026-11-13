@@ -52,8 +52,12 @@ import {
 
   Minus,
   LogOut,
+  Sparkles,
 
 } from "lucide-react";
+import BretonIntelligence from "./components/BretonIntelligence";
+
+
 
 type Store = "br" | "en" | "es";
 
@@ -338,6 +342,7 @@ function countPeriodDays(period?: Period) {
 }
 
 const nav = [
+  { id: "intelligence", label: "Inteligência", icon: Sparkles },
 
   {
 
@@ -2854,6 +2859,9 @@ export default function Home() {
   );
 
   function render() {
+    if (tab === "intelligence") {
+      return <BretonIntelligence storeLabel={currentStore.label} period={data.period} previousPeriod={data.previousPeriod} comparison={data.comparison} products={data.products} />;
+    }
 
     if (tab === "overview") {
 
