@@ -162,6 +162,92 @@ function groupProducts(rows: ReportRow[]): GroupedProduct[] {
     .sort((a, b) => b.views - a.views);
 }
 
+type DownloadCategory = "3d" | "2d" | "ficha" | "outros";
+
+type DownloadRecord = {
+  name: string;
+  path: string;
+  pagePath: string;
+  category: DownloadCategory;
+  count: number;
+};
+
+function normalizeProduct(value: string): string {
+  return decodeURIComponentSafe(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function decodeURIComponentSafe(value: string): string {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+
+function downloadCategory(label: string, filename: string): DownloadCategory {
+  const text = normalizeProduct(`${label} ${filename}`);
+  if (/(^|-)3d(-|$)/.test(text)) return "3d";
+  if (/(^|-)2d(-|$)/.test(text)) return "2d";
+  if (/(ficha-comercial|commercial-sheet|fiche-technique-commerciale|business-profile)/.test(text)) return "ficha";
+  return "outros";
+}
+
+function summarizeDownloads(rows: ReportRow[], products: GroupedProduct[]) {
+  const files = new Map<string, DownloadRecord>();
+  const perProduct = new Map<string, { total: number; d3: number; d2: number; ficha: number }>();
+  const unmatched = { total: 0 };
+  const totals = { total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
+  const productSlugs = new Map<string, string | null>();
+  for (const product of products) {
+    for (const name of [product.name, ...product.aliases]) {
+      const slug = normalizeProduct(name);
+      if (!slug) continue;
+      const existing = productSlugs.get(slug);
+      if (existing === undefined) productSlugs.set(slug, product.itemId || `name:${product.name}`);
+      else if (existing !== (product.itemId || `name:${product.name}`)) productSlugs.set(slug, null);
+    }
+  }
+  for (const row of rows) {
+    const [label = "", filePath = "", pagePath = ""] = row.dimensions;
+    const count = row.metrics[0] || 0;
+    if (!count) continue;
+    const filename = decodeURIComponentSafe(filePath.split("/").pop() || "");
+    const category = downloadCategory(label, filename);
+    const key = `${filePath}|${label}|${pagePath}`;
+    const existing = files.get(key);
+    if (existing) existing.count += count;
+    else files.set(key, { name: filename || label || "Arquivo sem nome", path: filePath, pagePath, category, count });
+    totals.total += count;
+    if (category === "3d") totals.d3 += count;
+    else if (category === "2d") totals.d2 += count;
+    else if (category === "ficha") totals.ficha += count;
+    else totals.outros += count;
+
+    // Só relaciona ao produto quando o slug da PDP corresponde exatamente
+    // a um nome de produto único no relatório. Não atribui por aproximação.
+    const match = decodeURIComponentSafe(pagePath).split("?")[0].match(/^\/([^/]+)\/p\/?$/i);
+    const slug = match ? normalizeProduct(match[1]) : "";
+    const productKey = slug ? productSlugs.get(slug) : undefined;
+    if (!productKey) { unmatched.total += count; continue; }
+    const record = perProduct.get(productKey) || { total: 0, d3: 0, d2: 0, ficha: 0 };
+    record.total += count;
+    if (category === "3d") record.d3 += count;
+    if (category === "2d") record.d2 += count;
+    if (category === "ficha") record.ficha += count;
+    perProduct.set(productKey, record);
+  }
+  return {
+    totals,
+    unmatched: unmatched.total,
+    files: [...files.values()].sort((a, b) => b.count - a.count),
+    products: products.map((p) => ({
+      itemId: p.itemId, name: p.name,
+      ...(perProduct.get(p.itemId || `name:${p.name}`) || { total: 0, d3: 0, d2: 0, ficha: 0 }),
+    })).sort((a,b) => b.total - a.total),
+  };
+}
+
 function overviewFromRows(rows: ReportRow[]) {
   const metrics = rows[0]?.metrics || [];
 
@@ -295,6 +381,7 @@ export async function GET(req: NextRequest) {
       from: string,
       to: string,
       all = false,
+      eventFilter?: string,
     ): Promise<ReportRow[]> {
       const result: ReportRow[] = [];
       let offset = 0;
@@ -317,6 +404,7 @@ export async function GET(req: NextRequest) {
           limit: all ? 10000 : 1000,
           offset,
           keepEmptyRows: false,
+          ...(eventFilter ? { dimensionFilter: { filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT" as const, value: eventFilter } } } } : {}),
         });
 
         const rows: ReportRow[] = (
@@ -367,6 +455,7 @@ export async function GET(req: NextRequest) {
       countries,
       landings,
       items,
+      downloadRows,
     ] = await Promise.all([
       report([], overviewMetrics, start, end),
 
@@ -448,8 +537,11 @@ export async function GET(req: NextRequest) {
         end,
         true,
       ),
+      report(["linkText", "fileName", "pagePath"], ["eventCount"], start, end, true, "file_download"),
     ]);
 
+    const groupedProducts = groupProducts(items);
+    const downloads = summarizeDownloads(downloadRows, groupedProducts);
     const overview = overviewFromRows(totals);
 
     const previousOverview =
@@ -575,7 +667,8 @@ export async function GET(req: NextRequest) {
           }))
           .sort((a, b) => b.sessions - a.sessions),
 
-        products: groupProducts(items),
+        products: groupedProducts,
+        downloads,
       },
       {
         headers: NO_STORE_HEADERS,

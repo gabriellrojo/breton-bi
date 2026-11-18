@@ -83,6 +83,13 @@ type Product = {
 
 };
 
+type Downloads = {
+  totals: { total: number; d3: number; d2: number; ficha: number; outros: number };
+  unmatched: number;
+  files: { name: string; path: string; pagePath: string; category: "3d" | "2d" | "ficha" | "outros"; count: number }[];
+  products: { itemId: string; name: string; total: number; d3: number; d2: number; ficha: number }[];
+};
+
 type Event = {
 
   name: string;
@@ -178,6 +185,7 @@ type Data = {
   pages: Page[];
 
   products: Product[];
+  downloads?: Downloads;
 
   events: Event[];
 
@@ -3551,6 +3559,26 @@ export default function Home() {
 
           </div>
 
+          <div className="metrics">
+            <Card label="Downloads de arquivos" value={data.downloads?.totals.total || 0} />
+            <Card label="Downloads 3D" value={data.downloads?.totals.d3 || 0} />
+            <Card label="Downloads 2D" value={data.downloads?.totals.d2 || 0} />
+            <Card label="Fichas comerciais" value={data.downloads?.totals.ficha || 0} />
+          </div>
+          <Section title="Produtos com mais downloads" subtitle="Downloads identificados pela página do produto (PDP), no período selecionado">
+            {table(
+              ["Produto", "Total", "3D", "2D", "Ficha comercial"],
+              (data.downloads?.products || []).filter((p) => p.total > 0).slice(0, 100).map((p) => [p.name, p.total, p.d3, p.d2, p.ficha]),
+            )}
+            <p className="footnote">O vínculo ao produto só é feito quando a URL da PDP corresponde exatamente a um nome único do relatório GA4. Downloads não identificados não são atribuídos por aproximação. Eventos de download representam cliques rastreados, não a confirmação da transferência.</p>
+          </Section>
+          <Section title="Arquivos mais baixados" subtitle="Ranking por nome e caminho do arquivo, incluindo downloads sem produto identificado">
+            {table(
+              ["Arquivo", "Categoria", "Downloads", "Página de origem"],
+              (data.downloads?.files || []).slice(0, 100).map((f) => [f.name, f.category === "ficha" ? "Ficha comercial" : f.category.toUpperCase(), f.count, f.pagePath]),
+            )}
+            <p className="footnote">Não vinculados com segurança a um produto: {data.downloads?.unmatched || 0} eventos. Outros tipos de arquivo: {data.downloads?.totals.outros || 0} eventos. O total inclui todos os eventos file_download registrados pelo GA4.</p>
+          </Section>
           <Section
 
             title="Ranking de produtos"
