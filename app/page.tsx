@@ -3569,24 +3569,43 @@ export default function Home() {
             <Card label="Downloads 2D" value={data.downloads?.totals.d2 || 0} />
             <Card label="Fichas comerciais" value={data.downloads?.totals.ficha || 0} />
           </div>
-          <Section title="Downloads por ambiente" subtitle={`Classificação VTEX da loja ${currentStore.label} no período selecionado`}>
+          <Section title="Downloads por área" subtitle={`Totais de Área Interna e Área Externa — ${currentStore.label}`}>
             {table(
-              ["Ambiente", "Total", "3D", "2D", "Ficha comercial", "Outros"],
-              (data.downloads?.areas || []).map((r) => [r.area, r.total, r.d3, r.d2, r.ficha, r.outros]),
+              ["Área", "Total de downloads", "3D", "2D", "Ficha comercial"],
+              ["Área Interna", "Área Externa"].map((area) => {
+                const row = (data.downloads?.areas || []).find((item) => item.area === area);
+                return [area, row?.total || 0, row?.d3 || 0, row?.d2 || 0, row?.ficha || 0];
+              }),
             )}
           </Section>
-          <Section title="Downloads por categoria" subtitle="Categorias oficiais do catálogo VTEX, separadas por ambiente">
+          <Section title="Downloads por categoria" subtitle="Totais por categoria de produto, independentemente da área">
             {table(
-              ["Ambiente", "Categoria", "Total", "3D", "2D", "Ficha comercial", "Outros"],
-              (data.downloads?.categories || []).map((r) => [r.area, r.category, r.total, r.d3, r.d2, r.ficha, r.outros]),
+              ["Categoria", "Total de downloads", "3D", "2D", "Ficha comercial"],
+              (() => {
+                const grouped = new Map<string, DownloadBreakdown>();
+                for (const row of data.downloads?.categories || []) {
+                  const key = row.category;
+                  const previous = grouped.get(key) || { total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
+                  grouped.set(key, {
+                    total: previous.total + row.total,
+                    d3: previous.d3 + row.d3,
+                    d2: previous.d2 + row.d2,
+                    ficha: previous.ficha + row.ficha,
+                    outros: previous.outros + row.outros,
+                  });
+                }
+                return [...grouped.entries()]
+                  .sort((a, b) => b[1].total - a[1].total)
+                  .map(([category, row]) => [category, row.total, row.d3, row.d2, row.ficha]);
+              })(),
             )}
           </Section>
-          <Section title="Produtos com mais downloads" subtitle="Identificação por correspondência exata da URL do produto com o catálogo VTEX">
+          <Section title="Produtos com mais downloads" subtitle="Ranking por produto, como no relatório anterior">
             {table(
-              ["Ambiente", "Categoria", "Produto", "Total", "3D", "2D", "Ficha comercial", "Outros"],
-              (data.downloads?.products || []).filter((p) => p.total > 0).slice(0, 100).map((p) => [p.area || "Não identificado", p.category || "Não identificada", p.name, p.total, p.d3, p.d2, p.ficha, p.outros]),
+              ["Produto", "Total", "3D", "2D", "Ficha comercial"],
+              (data.downloads?.products || []).filter((p) => p.total > 0).slice(0, 100).map((p) => [p.name, p.total, p.d3, p.d2, p.ficha]),
             )}
-            <p className="footnote">O vínculo com a VTEX exige correspondência exata da URL da PDP. Produtos não encontrados permanecem não identificados, sem atribuição por aproximação.</p>
+            <p className="footnote">Produtos sem correspondência segura na VTEX não são classificados por aproximação.</p>
           </Section>
           <Section title="Arquivos mais baixados" subtitle="Ranking de arquivos registrados pelo GA4">
             {table(
