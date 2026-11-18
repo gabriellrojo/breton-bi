@@ -83,11 +83,15 @@ type Product = {
 
 };
 
+type DownloadBreakdown = { total: number; d3: number; d2: number; ficha: number; outros: number };
 type Downloads = {
-  totals: { total: number; d3: number; d2: number; ficha: number; outros: number };
+  totals: DownloadBreakdown;
   unmatched: number;
-  files: { name: string; path: string; pagePath: string; category: "3d" | "2d" | "ficha" | "outros"; count: number }[];
-  products: { itemId: string; name: string; total: number; d3: number; d2: number; ficha: number }[];
+  limited?: boolean;
+  areas?: (DownloadBreakdown & { area: string })[];
+  categories?: (DownloadBreakdown & { area: string; category: string })[];
+  files: { name: string; path: string; pagePath: string; category: "3d" | "2d" | "ficha" | "outros"; count: number; product?: string; area?: string; productCategory?: string }[];
+  products: (DownloadBreakdown & { itemId: string; name: string; area?: string; category?: string })[];
 };
 
 type Event = {
@@ -3565,19 +3569,31 @@ export default function Home() {
             <Card label="Downloads 2D" value={data.downloads?.totals.d2 || 0} />
             <Card label="Fichas comerciais" value={data.downloads?.totals.ficha || 0} />
           </div>
-          <Section title="Produtos com mais downloads" subtitle="Downloads identificados pela página do produto (PDP), no período selecionado">
+          <Section title="Downloads por ambiente" subtitle={`Classificação VTEX da loja ${currentStore.label} no período selecionado`}>
             {table(
-              ["Produto", "Total", "3D", "2D", "Ficha comercial"],
-              (data.downloads?.products || []).filter((p) => p.total > 0).slice(0, 100).map((p) => [p.name, p.total, p.d3, p.d2, p.ficha]),
+              ["Ambiente", "Total", "3D", "2D", "Ficha comercial", "Outros"],
+              (data.downloads?.areas || []).map((r) => [r.area, r.total, r.d3, r.d2, r.ficha, r.outros]),
             )}
-            <p className="footnote">O vínculo ao produto só é feito quando a URL da PDP corresponde exatamente a um nome único do relatório GA4. Downloads não identificados não são atribuídos por aproximação. Eventos de download representam cliques rastreados, não a confirmação da transferência.</p>
           </Section>
-          <Section title="Arquivos mais baixados" subtitle="Ranking por nome e caminho do arquivo, incluindo downloads sem produto identificado">
+          <Section title="Downloads por categoria" subtitle="Categorias oficiais do catálogo VTEX, separadas por ambiente">
             {table(
-              ["Arquivo", "Categoria", "Downloads", "Página de origem"],
-              (data.downloads?.files || []).slice(0, 100).map((f) => [f.name, f.category === "ficha" ? "Ficha comercial" : f.category.toUpperCase(), f.count, f.pagePath]),
+              ["Ambiente", "Categoria", "Total", "3D", "2D", "Ficha comercial", "Outros"],
+              (data.downloads?.categories || []).map((r) => [r.area, r.category, r.total, r.d3, r.d2, r.ficha, r.outros]),
             )}
-            <p className="footnote">Não vinculados com segurança a um produto: {data.downloads?.unmatched || 0} eventos. Outros tipos de arquivo: {data.downloads?.totals.outros || 0} eventos. O total inclui todos os eventos file_download registrados pelo GA4.</p>
+          </Section>
+          <Section title="Produtos com mais downloads" subtitle="Identificação por correspondência exata da URL do produto com o catálogo VTEX">
+            {table(
+              ["Ambiente", "Categoria", "Produto", "Total", "3D", "2D", "Ficha comercial", "Outros"],
+              (data.downloads?.products || []).filter((p) => p.total > 0).slice(0, 100).map((p) => [p.area || "Não identificado", p.category || "Não identificada", p.name, p.total, p.d3, p.d2, p.ficha, p.outros]),
+            )}
+            <p className="footnote">O vínculo com a VTEX exige correspondência exata da URL da PDP. Produtos não encontrados permanecem não identificados, sem atribuição por aproximação.</p>
+          </Section>
+          <Section title="Arquivos mais baixados" subtitle="Ranking de arquivos registrados pelo GA4">
+            {table(
+              ["Arquivo", "Tipo", "Downloads", "Produto", "Categoria", "Página de origem"],
+              (data.downloads?.files || []).slice(0, 100).map((f) => [f.name, f.category === "ficha" ? "Ficha comercial" : f.category.toUpperCase(), f.count, f.product || "Não identificado", f.productCategory || "Não identificada", f.pagePath]),
+            )}
+            <p className="footnote">Não vinculados a um produto: {data.downloads?.unmatched || 0} eventos. Outros tipos: {data.downloads?.totals.outros || 0}. {data.downloads?.limited ? "A consulta ao catálogo foi limitada a 200 produtos distintos neste carregamento. " : ""}Os eventos file_download indicam cliques rastreados, não a confirmação de conclusão do download.</p>
           </Section>
           <Section
 

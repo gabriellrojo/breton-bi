@@ -1,168 +1,341 @@
 
+
 import { NextRequest, NextResponse } from "next/server";
+
 import { BetaAnalyticsDataClient } from "@google-analytics/data";
+
 import { isAuthenticated } from "../../../lib/auth";
 
+
+
 export const runtime = "nodejs";
+
 export const dynamic = "force-dynamic";
+
+
 
 type Store = "br" | "en" | "es";
 
+
+
 const properties: Record<Store, string> = {
+
   br: "494454950",
+
   en: "494483822",
+
   es: "494471953",
+
 };
+
+
 
 const NO_STORE_HEADERS = {
+
   "Cache-Control": "private, no-store, max-age=0",
+
 };
+
+
 
 type ReportRow = {
+
   dimensions: string[];
+
   metrics: number[];
+
 };
+
+
 
 type GroupedProduct = {
+
   itemId: string;
+
   name: string;
+
   views: number;
+
   quoteAdds: number;
+
   aliases: string[];
+
 };
 
+
+
 function parseDate(value: string): Date | null {
+
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+
     return null;
+
   }
+
+
 
   const date = new Date(`${value}T00:00:00.000Z`);
 
+
+
   if (
-    Number.isNaN(date.getTime()) ||
+
+Number.isNaN(date.getTime()) ||
+
     date.toISOString().slice(0, 10) !== value
+
   ) {
+
     return null;
+
   }
 
+
+
   return date;
+
 }
+
+
 
 function formatDate(date: Date): string {
+
   return date.toISOString().slice(0, 10);
+
 }
+
+
 
 function getPreviousPeriod(start: string, end: string) {
+
   const startDate = parseDate(start)!;
+
   const endDate = parseDate(end)!;
 
+
+
   const days =
+
     Math.round(
+
       (endDate.getTime() - startDate.getTime()) / 86400000,
+
     ) + 1;
 
+
+
   const previousEnd = new Date(startDate);
+
   previousEnd.setUTCDate(previousEnd.getUTCDate() - 1);
 
+
+
   const previousStart = new Date(previousEnd);
+
   previousStart.setUTCDate(
+
     previousStart.getUTCDate() - days + 1,
+
   );
 
+
+
   return {
+
     from: formatDate(previousStart),
+
     to: formatDate(previousEnd),
+
     days,
+
   };
+
 }
 
+
+
 function groupProducts(rows: ReportRow[]): GroupedProduct[] {
+
   const grouped = new Map<
+
     string,
+
     {
+
       itemId: string;
+
       views: number;
+
       quoteAdds: number;
+
       names: Map<
+
         string,
+
         {
+
           views: number;
+
           quoteAdds: number;
+
         }
+
       >;
+
     }
+
   >();
 
+
+
   for (const row of rows) {
+
     const itemId = row.dimensions[0]?.trim() || "";
+
     const itemName = row.dimensions[1]?.trim() || "";
+
+
 
     if (!itemId && !itemName) continue;
 
+
+
     const hasId = itemId && itemId !== "(not set)";
 
+
+
     const key = hasId
+
       ? `id:${itemId}`
+
       : `name:${itemName}`;
 
+
+
     if (!grouped.has(key)) {
+
       grouped.set(key, {
+
         itemId: hasId ? itemId : "",
+
         views: 0,
+
         quoteAdds: 0,
+
         names: new Map(),
+
       });
+
     }
+
+
 
     const product = grouped.get(key)!;
 
+
+
     const views = row.metrics[0] || 0;
+
     const quoteAdds = row.metrics[1] || 0;
 
+
+
     product.views += views;
+
     product.quoteAdds += quoteAdds;
 
+
+
     if (itemName && itemName !== "(not set)") {
+
       const existing = product.names.get(itemName) || {
+
         views: 0,
+
         quoteAdds: 0,
+
       };
+
+
 
       existing.views += views;
+
       existing.quoteAdds += quoteAdds;
 
+
+
       product.names.set(itemName, existing);
+
     }
+
   }
 
+
+
   return [...grouped.values()]
+
     .map((product) => {
+
       const names = [...product.names.entries()].sort(
+
         (a, b) =>
+
           b[1].views - a[1].views ||
+
           b[1].quoteAdds - a[1].quoteAdds,
+
       );
 
+
+
       const primaryName =
+
         names[0]?.[0] ||
+
         (product.itemId
+
           ? `Produto ${product.itemId}`
+
           : "Produto sem identificação");
 
+
+
       return {
+
         itemId: product.itemId,
+
         name: primaryName,
+
         views: product.views,
+
         quoteAdds: product.quoteAdds,
+
         aliases: names
+
           .map(([name]) => name)
+
           .filter((name) => name !== primaryName),
+
       };
+
     })
+
     .sort((a, b) => b.views - a.views);
+
 }
 
+
+
 type DownloadCategory = "3d" | "2d" | "ficha" | "outros";
+
+type CatalogProduct = {
+  name: string;
+  productId: string;
+  reference: string;
+  area: string;
+  category: string;
+  slug: string;
+};
 
 type DownloadRecord = {
   name: string;
@@ -170,15 +343,24 @@ type DownloadRecord = {
   pagePath: string;
   category: DownloadCategory;
   count: number;
+  product: string;
+  area: string;
+  productCategory: string;
 };
 
+const catalogHosts: Record<Store, string> = {
+  br: "https://secure.breton.com.br",
+  en: "https://secure.en.breton.co",
+  es: "https://secure.es.breton.co",
+};
+
+// Cache apenas em memória: nenhuma credencial da VTEX é necessária.
+const catalogCache = new Map<string, { expires: number; product: CatalogProduct | null }>();
+
 function normalizeProduct(value: string): string {
-  return decodeURIComponentSafe(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  return decodeURIComponentSafe(value).normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function decodeURIComponentSafe(value: string): string {
@@ -189,506 +371,998 @@ function downloadCategory(label: string, filename: string): DownloadCategory {
   const text = normalizeProduct(`${label} ${filename}`);
   if (/(^|-)3d(-|$)/.test(text)) return "3d";
   if (/(^|-)2d(-|$)/.test(text)) return "2d";
-  if (/(ficha-comercial|commercial-sheet|fiche-technique-commerciale|business-profile)/.test(text)) return "ficha";
+  if (/(ficha|commercial-sheet|technical-sheet|fiche-technique|business-profile)/.test(text)) return "ficha";
   return "outros";
 }
 
-function summarizeDownloads(rows: ReportRow[], products: GroupedProduct[]) {
-  const files = new Map<string, DownloadRecord>();
-  const perProduct = new Map<string, { total: number; d3: number; d2: number; ficha: number }>();
-  const unmatched = { total: 0 };
-  const totals = { total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
-  const productSlugs = new Map<string, string | null>();
-  for (const product of products) {
-    for (const name of [product.name, ...product.aliases]) {
-      const slug = normalizeProduct(name);
-      if (!slug) continue;
-      const existing = productSlugs.get(slug);
-      if (existing === undefined) productSlugs.set(slug, product.itemId || `name:${product.name}`);
-      else if (existing !== (product.itemId || `name:${product.name}`)) productSlugs.set(slug, null);
+function pdpSlug(pagePath: string): string {
+  const pathname = decodeURIComponentSafe(pagePath).split("?")[0];
+  const match = pathname.match(/^\/([^/]+)\/p\/?$/i);
+  return match ? normalizeProduct(match[1]) : "";
+}
+
+async function catalogBySlug(store: Store, slug: string): Promise<CatalogProduct | null> {
+  const key = `${store}:${slug}`;
+  const cached = catalogCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.product;
+  let product: CatalogProduct | null = null;
+  try {
+    const url = `${catalogHosts[store]}/api/catalog_system/pub/products/search/${encodeURIComponent(slug)}/p`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(7000), headers: { Accept: "application/json" } });
+    if (response.ok) {
+      const json: unknown = await response.json();
+      if (Array.isArray(json)) {
+        const exact = json.filter((entry) => entry && typeof entry === "object" &&
+          normalizeProduct(String(entry.linkText || "")) === slug);
+        if (exact.length === 1) {
+          const entry = exact[0];
+          const categories = Array.isArray(entry.categories) ? entry.categories : [];
+          const path = String(categories[0] || "").split("/").filter(Boolean);
+          const root = normalizeProduct(path[0] || "");
+          const area = ["area-interna", "indoor-area", "zona-interior"].includes(root)
+            ? "Área Interna" : ["area-externa", "outdoor-area", "zona-exterior"].includes(root)
+              ? "Área Externa" : "Não identificado";
+          product = {
+            name: String(entry.Nome?.[0] || entry.Name?.[0] || entry.productName || slug),
+            productId: String(entry.productId || ""),
+            reference: String(entry.productReference || ""),
+            area,
+            category: String(path[1] || "Não identificada"),
+            slug,
+          };
+        }
+      }
     }
+  } catch (error) {
+    console.warn("Catálogo VTEX indisponível para", store, slug, error);
   }
+  catalogCache.set(key, { product, expires: Date.now() + (product ? 3600000 : 300000) });
+  if (catalogCache.size > 5000) catalogCache.clear();
+  return product;
+}
+
+async function resolveCatalog(store: Store, rows: ReportRow[]) {
+  const slugs = [...new Set(rows.map((r) => pdpSlug(r.dimensions[2] || "")).filter(Boolean))];
+  const resolved = new Map<string, CatalogProduct>();
+  // Limite defensivo de consultas por requisição; o restante permanece não identificado.
+  const MAX_LOOKUPS = 200;
+  const selected = slugs.slice(0, MAX_LOOKUPS);
+  let index = 0;
+  await Promise.all(Array.from({ length: Math.min(8, selected.length) }, async () => {
+    while (index < selected.length) {
+      const slug = selected[index++];
+      const product = await catalogBySlug(store, slug);
+      if (product) resolved.set(slug, product);
+    }
+  }));
+  return { resolved, limited: slugs.length > MAX_LOOKUPS };
+}
+
+function summarizeDownloads(rows: ReportRow[], catalog: Map<string, CatalogProduct>, limited: boolean) {
+  const files = new Map<string, DownloadRecord>();
+  const products = new Map<string, { itemId: string; name: string; area: string; category: string; total: number; d3: number; d2: number; ficha: number; outros: number }>();
+  const categories = new Map<string, { area: string; category: string; total: number; d3: number; d2: number; ficha: number; outros: number }>();
+  const areas = new Map<string, { area: string; total: number; d3: number; d2: number; ficha: number; outros: number }>();
+  const totals = { total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
+  let unmatched = 0;
   for (const row of rows) {
     const [label = "", filePath = "", pagePath = ""] = row.dimensions;
     const count = row.metrics[0] || 0;
     if (!count) continue;
-    const filename = decodeURIComponentSafe(filePath.split("/").pop() || "");
+    const filename = decodeURIComponentSafe(filePath.split("?")[0].split("/").pop() || "");
     const category = downloadCategory(label, filename);
-    const key = `${filePath}|${label}|${pagePath}`;
-    const existing = files.get(key);
-    if (existing) existing.count += count;
-    else files.set(key, { name: filename || label || "Arquivo sem nome", path: filePath, pagePath, category, count });
+    const field = category === "3d" ? "d3" : category === "2d" ? "d2" : category === "ficha" ? "ficha" : "outros";
+    const product = catalog.get(pdpSlug(pagePath));
+    const area = product?.area || "Não identificado";
+    const productCategory = product?.category || "Não identificada";
+    const productName = product?.name || "Não identificado";
     totals.total += count;
-    if (category === "3d") totals.d3 += count;
-    else if (category === "2d") totals.d2 += count;
-    else if (category === "ficha") totals.ficha += count;
-    else totals.outros += count;
-
-    // Só relaciona ao produto quando o slug da PDP corresponde exatamente
-    // a um nome de produto único no relatório. Não atribui por aproximação.
-    const match = decodeURIComponentSafe(pagePath).split("?")[0].match(/^\/([^/]+)\/p\/?$/i);
-    const slug = match ? normalizeProduct(match[1]) : "";
-    const productKey = slug ? productSlugs.get(slug) : undefined;
-    if (!productKey) { unmatched.total += count; continue; }
-    const record = perProduct.get(productKey) || { total: 0, d3: 0, d2: 0, ficha: 0 };
-    record.total += count;
-    if (category === "3d") record.d3 += count;
-    if (category === "2d") record.d2 += count;
-    if (category === "ficha") record.ficha += count;
-    perProduct.set(productKey, record);
+    totals[field] += count;
+    if (!product) unmatched += count;
+    const fileKey = `${filePath}|${label}|${pagePath}`;
+    const file = files.get(fileKey);
+    if (file) file.count += count;
+    else files.set(fileKey, { name: filename || label || "Arquivo sem nome", path: filePath, pagePath, category, count, product: productName, area, productCategory });
+    const areaRow = areas.get(area) || { area, total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
+    areaRow.total += count; areaRow[field] += count; areas.set(area, areaRow);
+    const catKey = `${area}|${productCategory}`;
+    const catRow = categories.get(catKey) || { area, category: productCategory, total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
+    catRow.total += count; catRow[field] += count; categories.set(catKey, catRow);
+    if (product) {
+      const productKey = product.productId;
+      const productRow = products.get(productKey) || { itemId: productKey, name: productName, area, category: productCategory, total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
+      productRow.total += count; productRow[field] += count; products.set(productKey, productRow);
+    }
   }
-  return {
-    totals,
-    unmatched: unmatched.total,
-    files: [...files.values()].sort((a, b) => b.count - a.count),
-    products: products.map((p) => ({
-      itemId: p.itemId, name: p.name,
-      ...(perProduct.get(p.itemId || `name:${p.name}`) || { total: 0, d3: 0, d2: 0, ficha: 0 }),
-    })).sort((a,b) => b.total - a.total),
-  };
+  const byTotal = <T extends { total: number }>(items: Iterable<T>) => [...items].sort((a, b) => b.total - a.total);
+  return { totals, unmatched, limited, files: [...files.values()].sort((a, b) => b.count - a.count), products: byTotal(products.values()), categories: byTotal(categories.values()), areas: byTotal(areas.values()) };
 }
 
 function overviewFromRows(rows: ReportRow[]) {
+
   const metrics = rows[0]?.metrics || [];
 
+
+
   return {
+
     sessions: metrics[0] || 0,
+
     activeUsers: metrics[1] || 0,
+
     pageViews: metrics[2] || 0,
+
     engagedSessions: metrics[3] || 0,
+
     engagementRate: metrics[4] || 0,
+
     avgSessionSeconds: metrics[5] || 0,
+
   };
+
 }
+
+
 
 function dateRangeDays(from: string, to: string) {
+
   const result: string[] = [];
 
+
+
   const current = parseDate(from)!;
+
   const last = parseDate(to)!;
 
+
+
   while (current <= last) {
+
     result.push(formatDate(current));
+
     current.setUTCDate(current.getUTCDate() + 1);
+
   }
+
+
 
   return result;
+
 }
+
+
 
 function formatDailyRows(
-  rows: ReportRow[],
-  from: string,
-  to: string,
+
+rows: ReportRow[],
+
+from: string,
+
+to: string,
+
 ) {
+
   const byDate = new Map(
+
     rows.map((row) => [
+
       row.dimensions[0],
+
       row.metrics[0] || 0,
+
     ]),
+
   );
 
+
+
   return dateRangeDays(from, to).map((date) => ({
+
     date,
+
     sessions:
+
       byDate.get(date.replaceAll("-", "")) || 0,
+
   }));
+
 }
 
+
+
 export async function GET(req: NextRequest) {
+
   // Proteção independente do proxy.ts.
+
   // Sem sessão válida, nenhuma consulta ao GA4 é executada.
+
   if (!isAuthenticated(req)) {
+
     return NextResponse.json(
+
       { error: "Não autorizado." },
+
       {
+
         status: 401,
+
         headers: NO_STORE_HEADERS,
+
       },
+
     );
+
   }
+
+
 
   const requestedStore =
+
     req.nextUrl.searchParams.get("store") || "br";
 
+
+
   if (
+
     requestedStore !== "br" &&
+
     requestedStore !== "en" &&
+
     requestedStore !== "es"
+
   ) {
+
     return NextResponse.json(
+
       { error: "Loja inválida. Utilize br, en ou es." },
+
       {
+
         status: 400,
+
         headers: NO_STORE_HEADERS,
+
       },
+
     );
+
   }
+
+
 
   const store: Store = requestedStore;
+
   const property = properties[store];
 
+
+
   const start =
+
     req.nextUrl.searchParams.get("start") || "2026-08-11";
 
+
+
   const end =
+
     req.nextUrl.searchParams.get("end") || "2026-11-08";
 
+
+
   const startDate = parseDate(start);
+
   const endDate = parseDate(end);
 
+
+
   if (!startDate || !endDate || startDate > endDate) {
+
     return NextResponse.json(
+
       { error: "Período inválido." },
+
       {
+
         status: 400,
+
         headers: NO_STORE_HEADERS,
+
       },
+
     );
+
   }
+
+
 
   const previousPeriod = getPreviousPeriod(start, end);
 
+
+
   const raw = process.env.GA4_SERVICE_ACCOUNT_JSON;
 
+
+
   if (!raw) {
+
     return NextResponse.json(
+
       {
+
         error:
+
           "Conexão GA4 não configurada. Defina GA4_SERVICE_ACCOUNT_JSON.",
+
       },
+
       {
+
         status: 503,
+
         headers: NO_STORE_HEADERS,
+
       },
+
     );
+
   }
 
+
+
   try {
+
     const credentials = JSON.parse(raw);
 
+
+
     if (credentials.private_key) {
+
       credentials.private_key =
-        credentials.private_key.replace(/\\n/g, "\n");
+
+        credentials.private_key.replace(/\\\n/g, "\n");
+
     }
+
+
 
     const client = new BetaAnalyticsDataClient({
+
       credentials,
+
     });
 
+
+
     async function report(
-      dimensions: string[],
-      metrics: string[],
-      from: string,
-      to: string,
-      all = false,
-      eventFilter?: string,
+
+dimensions: string[],
+
+metrics: string[],
+
+from: string,
+
+to: string,
+
+all = false,
+
+eventFilter?: string,
+
     ): Promise<ReportRow[]> {
+
       const result: ReportRow[] = [];
+
       let offset = 0;
 
+
+
       do {
+
         const [response] = await client.runReport({
+
           property: `properties/${property}`,
+
           dateRanges: [
+
             {
+
               startDate: from,
+
               endDate: to,
+
             },
+
           ],
+
           dimensions: dimensions.map((name) => ({
+
             name,
+
           })),
+
           metrics: metrics.map((name) => ({
+
             name,
+
           })),
+
           limit: all ? 10000 : 1000,
+
           offset,
+
           keepEmptyRows: false,
+
           ...(eventFilter ? { dimensionFilter: { filter: { fieldName: "eventName", stringFilter: { matchType: "EXACT" as const, value: eventFilter } } } } : {}),
+
         });
 
+
+
         const rows: ReportRow[] = (
+
           response.rows || []
+
         ).map((row) => ({
+
           dimensions: (row.dimensionValues || []).map(
+
             (value) => value.value || "",
+
           ),
+
           metrics: (row.metricValues || []).map(
+
             (value) => Number(value.value || 0),
+
           ),
+
         }));
 
+
+
         result.push(...rows);
+
         offset += rows.length;
 
+
+
         if (
+
           !all ||
+
           !rows.length ||
+
           offset >= Number(response.rowCount || 0) ||
+
           offset >= 1000000
+
         ) {
+
           break;
+
         }
+
       } while (true);
 
+
+
       return result;
+
     }
 
+
+
     const overviewMetrics = [
+
       "sessions",
+
       "activeUsers",
+
       "screenPageViews",
+
       "engagedSessions",
+
       "engagementRate",
+
       "averageSessionDuration",
+
     ];
 
+
+
     const [
+
       totals,
+
       previousTotals,
+
       currentDailyRows,
+
       previousDailyRows,
+
       paths,
+
       events,
+
       channels,
+
       devices,
+
       countries,
+
       landings,
+
       items,
+
       downloadRows,
+
     ] = await Promise.all([
+
       report([], overviewMetrics, start, end),
 
+
+
       report(
+
         [],
+
         overviewMetrics,
+
         previousPeriod.from,
+
         previousPeriod.to,
+
       ),
 
+
+
       report(
+
         ["date"],
+
         ["sessions"],
+
         start,
+
         end,
+
         true,
+
       ),
 
+
+
       report(
+
         ["date"],
+
         ["sessions"],
+
         previousPeriod.from,
+
         previousPeriod.to,
+
         true,
+
       ),
 
+
+
       report(
+
         ["pagePath"],
+
         ["screenPageViews"],
+
         start,
+
         end,
+
         true,
+
       ),
 
+
+
       report(
+
         ["eventName"],
+
         ["eventCount"],
+
         start,
+
         end,
+
         true,
+
       ),
 
+
+
       report(
+
         ["sessionDefaultChannelGroup"],
+
         ["sessions"],
+
         start,
+
         end,
+
         true,
+
       ),
 
+
+
       report(
+
         ["deviceCategory"],
+
         ["sessions"],
+
         start,
+
         end,
+
         true,
+
       ),
 
+
+
       report(
+
         ["country"],
+
         ["sessions"],
+
         start,
+
         end,
+
         true,
+
       ),
 
+
+
       report(
+
         ["landingPage"],
+
         ["sessions"],
+
         start,
+
         end,
+
         true,
+
       ),
 
+
+
       report(
+
         ["itemId", "itemName"],
+
         ["itemsViewed", "itemsAddedToCart"],
+
         start,
+
         end,
+
         true,
+
       ),
+
       report(["linkText", "fileName", "pagePath"], ["eventCount"], start, end, true, "file_download"),
+
     ]);
 
+
+
     const groupedProducts = groupProducts(items);
-    const downloads = summarizeDownloads(downloadRows, groupedProducts);
+
+    const catalog = await resolveCatalog(store, downloadRows);
+  const downloads = summarizeDownloads(downloadRows, catalog.resolved, catalog.limited);
+
     const overview = overviewFromRows(totals);
 
+
+
     const previousOverview =
+
       overviewFromRows(previousTotals);
 
+
+
     const currentDaily = formatDailyRows(
+
       currentDailyRows,
+
       start,
+
       end,
+
     );
+
+
 
     const previousDaily = formatDailyRows(
+
       previousDailyRows,
+
       previousPeriod.from,
+
       previousPeriod.to,
+
     );
+
+
 
     // Compara o dia 1 de cada intervalo, dia 2 etc.
+
     const dailyComparison = currentDaily.map(
+
       (day, index) => ({
+
         day: index + 1,
+
         currentDate: day.date,
+
         previousDate: previousDaily[index]?.date || "",
+
         currentSessions: day.sessions,
+
         previousSessions:
+
           previousDaily[index]?.sessions || 0,
+
       }),
+
     );
+
+
 
     const eventCount = (name: string) =>
+
       events.find(
+
         (row) => row.dimensions[0] === name,
+
       )?.metrics[0] || 0;
+
+
 
     // A comparação de orçamentos usa o mesmo evento
+
     // add_to_cart que alimenta o card atual.
+
     const previousAddToCart = await report(
+
       ["eventName"],
+
       ["eventCount"],
+
       previousPeriod.from,
+
       previousPeriod.to,
+
       true,
+
     );
 
+
+
     const previousQuoteAdds =
+
       previousAddToCart.find(
+
         (row) => row.dimensions[0] === "add_to_cart",
+
       )?.metrics[0] || 0;
 
+
+
     return NextResponse.json(
+
       {
+
         source: "ga4-live",
+
         store,
+
         property,
 
+
+
         period: {
+
           from: start,
+
           to: end,
+
         },
 
+
+
         previousPeriod: {
+
           from: previousPeriod.from,
+
           to: previousPeriod.to,
+
         },
+
+
 
         overview,
 
+
+
         previousOverview,
 
+
+
         comparison: {
+
           current: {
+
             sessions: overview.sessions,
+
             activeUsers: overview.activeUsers,
+
             pageViews: overview.pageViews,
+
             quoteAdds: eventCount("add_to_cart"),
+
           },
 
+
+
           previous: {
+
             sessions: previousOverview.sessions,
+
             activeUsers: previousOverview.activeUsers,
+
             pageViews: previousOverview.pageViews,
+
             quoteAdds: previousQuoteAdds,
+
           },
+
         },
+
+
 
         dailyComparison,
 
+
+
         pages: paths
+
           .map((row) => ({
+
             path: row.dimensions[0],
+
             views: row.metrics[0],
+
           }))
+
           .sort((a, b) => b.views - a.views),
 
+
+
         events: events.map((row) => ({
+
           name: row.dimensions[0],
+
           count: row.metrics[0],
+
         })),
+
+
 
         channels: channels
+
           .map((row) => ({
+
             name: row.dimensions[0],
+
             sessions: row.metrics[0],
+
           }))
+
           .sort((a, b) => b.sessions - a.sessions),
+
+
 
         devices: devices.map((row) => ({
+
           name: row.dimensions[0],
+
           sessions: row.metrics[0],
+
         })),
 
+
+
         countries: countries
+
           .map((row) => ({
+
             name: row.dimensions[0],
+
             sessions: row.metrics[0],
+
           }))
+
           .sort((a, b) => b.sessions - a.sessions),
+
+
 
         landings: landings
+
           .map((row) => ({
+
             path: row.dimensions[0],
+
             sessions: row.metrics[0],
+
           }))
+
           .sort((a, b) => b.sessions - a.sessions),
 
+
+
         products: groupedProducts,
+
         downloads,
+
       },
+
       {
+
         headers: NO_STORE_HEADERS,
+
       },
-    );
-  } catch (error) {
-    console.error(
-      `GA4 error - store=${store}, property=${property}`,
-      error,
+
     );
 
-    return NextResponse.json(
-      {
-        error:
-          "Falha na consulta GA4. Verifique as permissões, credenciais e o período selecionado.",
-      },
-      {
-        status: 502,
-        headers: NO_STORE_HEADERS,
-      },
+  } catch (error) {
+
+    console.error(
+
+      `GA4 error - store=${store}, property=${property}`,
+
+      error,
+
     );
+
+
+
+    return NextResponse.json(
+
+      {
+
+        error:
+
+          "Falha na consulta GA4. Verifique as permissões, credenciais e o período selecionado.",
+
+      },
+
+      {
+
+        status: 502,
+
+        headers: NO_STORE_HEADERS,
+
+      },
+
+    );
+
   }
+
 }
