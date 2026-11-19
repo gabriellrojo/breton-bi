@@ -3743,16 +3743,34 @@ export default function Home() {
             <Card label="Downloads 2D" value={data.downloads?.totals.d2 || 0} />
             <Card label="Fichas comerciais" value={data.downloads?.totals.ficha || 0} />
           </div>
-          <Section title="Downloads por área" subtitle={`Totais de Área Interna e Área Externa — ${currentStore.label}`}>
+          {(() => {
+            const downloads = data.downloads;
+            if (!downloads) return null;
+            const totalTipos = downloads.totals.d3 + downloads.totals.d2 + downloads.totals.ficha + downloads.totals.outros;
+            const totalAreas = (downloads.areas || []).reduce((sum, row) => sum + row.total, 0);
+            const totalCategorias = (downloads.categories || []).reduce((sum, row) => sum + row.total, 0);
+            const totalArquivos = (downloads.files || []).reduce((sum, row) => sum + row.count, 0);
+            const inconsistencias = [
+              ["Tipos", totalTipos], ["Áreas", totalAreas],
+              ["Categorias", totalCategorias], ["Arquivos", totalArquivos],
+            ].filter(([, value]) => value !== downloads.totals.total);
+            return inconsistencias.length ? (
+              <p className="footnote" role="alert">
+                ATENÇÃO: divergência na conciliação dos downloads. Total geral: {fmt(downloads.totals.total)}.
+                {inconsistencias.map(([nome, valor]) => ` ${nome}: ${fmt(Number(valor))}.`).join("")}
+                Confira o período selecionado e os dados retornados pela API.
+              </p>
+            ) : (
+              <p className="footnote">Conciliação conferida: tipos, áreas, categorias e arquivos somam {fmt(downloads.totals.total)} downloads.</p>
+            );
+          })()}
+          <Section title="Downloads por área" subtitle={`Somente arquivos 3D, 2D e fichas comerciais de produtos identificados — ${currentStore.label}`}>
             {table(
               ["Área", "Total de downloads", "3D", "2D", "Ficha comercial"],
-              ["Área Interna", "Área Externa"].map((area) => {
-                const row = (data.downloads?.areas || []).find((item) => item.area === area);
-                return [area, row?.total || 0, row?.d3 || 0, row?.d2 || 0, row?.ficha || 0];
-              }),
+              (data.downloads?.areas || []).map((row) => [row.area, row.total, row.d3, row.d2, row.ficha]),
             )}
           </Section>
-          <Section title="Downloads por categoria" subtitle="Totais por categoria de produto, independentemente da área">
+          <Section title="Downloads por categoria" subtitle="Todas as categorias de produto, independentemente da área">
             {table(
               ["Categoria", "Total de downloads", "3D", "2D", "Ficha comercial"],
               (() => {
@@ -3786,7 +3804,7 @@ export default function Home() {
               ["Arquivo", "Tipo", "Downloads", "Produto", "Categoria", "Página de origem"],
               (data.downloads?.files || []).slice(0, 100).map((f) => [f.name, f.category === "ficha" ? "Ficha comercial" : f.category.toUpperCase(), f.count, f.product || "Não identificado", f.productCategory || "Não identificada", f.pagePath]),
             )}
-            <p className="footnote">Não vinculados a um produto: {data.downloads?.unmatched || 0} eventos. Outros tipos: {data.downloads?.totals.outros || 0}. {data.downloads?.limited ? "" : ""}Os eventos file_download indicam cliques rastreados, não a confirmação de conclusão do download.</p>
+            <p className="footnote">Não vinculados a um produto: {data.downloads?.unmatched || 0} eventos. {data.downloads?.limited ? "" : ""}Os eventos file_download indicam cliques rastreados, não a confirmação de conclusão do download.</p>
           </Section>
 
 

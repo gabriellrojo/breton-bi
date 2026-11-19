@@ -547,9 +547,17 @@ function summarizeDownloads(rows: ReportRow[], catalog: Map<string, CatalogProdu
     const count = row.metrics[0] || 0;
     if (!count) continue;
     const filename = decodeURIComponentSafe(filePath.split("?")[0].split("/").pop() || "");
+    // Apenas downloads de produtos com tipo reconhecido e vínculo confirmado na VTEX.
+    // Eventos institucionais, guias de cuidados e arquivos sem identificação ficam fora.
+    const slug = pdpSlug(pagePath);
+    if (!slug) continue;
+    const product = catalog.get(slug);
+    if (!product) continue;
+    const normalizedFile = normalizeProduct(`${label} ${filename} ${filePath}`);
+    if (/(^|-)(esg|efeito-estufa|cuidados|guia-de-cuidados|relatorio)(-|$)/.test(normalizedFile)) continue;
     const category = downloadCategory(label, filename);
-    const field = category === "3d" ? "d3" : category === "2d" ? "d2" : category === "ficha" ? "ficha" : "outros";
-    const product = catalog.get(pdpSlug(pagePath));
+    if (category === "outros") continue;
+    const field = category === "3d" ? "d3" : category === "2d" ? "d2" : "ficha";
     const area = product?.area || "Não identificado";
     const productCategory = product?.category || "Não identificada";
     const productName = product?.name || "Não identificado";
