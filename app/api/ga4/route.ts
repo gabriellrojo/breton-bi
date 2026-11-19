@@ -1,5 +1,4 @@
 
-
 import { NextRequest, NextResponse } from "next/server";
 
 import { BetaAnalyticsDataClient } from "@google-analytics/data";
