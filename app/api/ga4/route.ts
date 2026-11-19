@@ -348,13 +348,13 @@ type DownloadRecord = {
   productCategory: string;
 };
 
-const catalogHosts: Record<Store, string> = {
-  br: "https://secure.breton.com.br",
-  en: "https://secure.en.breton.co",
-  es: "https://secure.es.breton.co",
+const catalogHosts: Record<Store, string[]> = {
+  br: ["https://www.breton.co", "https://secure.breton.com.br"],
+  en: ["https://en.breton.co", "https://secure.en.breton.co"],
+  es: ["https://es.breton.co", "https://secure.es.breton.co"],
 };
 
-// Cache apenas em memória: nenhuma credencial da VTEX é necessária.
+// Cache de catálogo em memória por instância; resultados positivos duram uma hora.
 const catalogCache = new Map<string, { expires: number; product: CatalogProduct | null }>();
 
 function normalizeProduct(value: string): string {
@@ -376,66 +376,163 @@ function downloadCategory(label: string, filename: string): DownloadCategory {
 }
 
 function pdpSlug(pagePath: string): string {
-  const pathname = decodeURIComponentSafe(pagePath).split("?")[0];
-  const match = pathname.match(/^\/([^/]+)\/p\/?$/i);
+  // O GA4 pode registrar apenas o path ou uma URL completa com parâmetros.
+  let pathname = pagePath;
+  try { pathname = new URL(pagePath, "https://www.breton.co").pathname; }
+  catch { pathname = pagePath.split("?")[0].split("#")[0]; }
+  const match = decodeURIComponentSafe(pathname).match(/^\/([^/]+)\/p\/?$/i);
   return match ? normalizeProduct(match[1]) : "";
 }
+
+type VtexEntry = {
+  linkText?: string;
+  productId?: string | number;
+  productName?: string;
+  productReference?: string;
+  categories?: string[];
+  Nome?: string[];
+  Name?: string[];
+  items?: Array<{ referenceId?: Array<{ Value?: string }>; ean?: string }>;
+};
+
+function catalogProductFromEntry(entry: VtexEntry): CatalogProduct | null {
+  const path = String(entry.categories?.[0] || "").split("/").filter(Boolean);
+  const root = normalizeProduct(path[0] || "");
+  const area = ["area-interna", "indoor-area", "zona-interior"].includes(root)
+    ? "Área Interna" : ["area-externa", "outdoor-area", "zona-exterior"].includes(root)
+      ? "Área Externa" : "Não identificado";
+  if (!entry.productId || area === "Não identificado" || !path[1]) return null;
+  return {
+    name: String(entry.Nome?.[0] || entry.Name?.[0] || entry.productName || entry.linkText || ""),
+    productId: String(entry.productId),
+    reference: String(entry.productReference || ""),
+    area,
+    category: path[1],
+    slug: normalizeProduct(String(entry.linkText || "")),
+  };
+}
+
+function referenceMatches(entry: VtexEntry, reference: string): boolean {
+  const target = reference.toUpperCase();
+  if (String(entry.productReference || "").toUpperCase() === target) return true;
+  return (entry.items || []).some(item =>
+    String(item.ean || "").toUpperCase() === target ||
+    (item.referenceId || []).some(ref => String(ref.Value || "").toUpperCase() === target));
+}
+
+// Apenas sufixos com formato de referência; não remover números arbitrários.
+function referenceSuffix(slug: string): string {
+  const match = slug.match(/-([a-z]{2,}[a-z0-9]*\d[a-z0-9]{4,})$/i);
+  return match ? match[1].toUpperCase() : "";
+}
+
+const lookupDiagnostics = new Map<string, string>();
 
 async function catalogBySlug(store: Store, slug: string): Promise<CatalogProduct | null> {
   const key = `${store}:${slug}`;
   const cached = catalogCache.get(key);
   if (cached && cached.expires > Date.now()) return cached.product;
+
+  const ref = referenceSuffix(slug);
+  const withoutRef = ref ? slug.slice(0, -(ref.length + 1)) : "";
+  // A busca VTEX por caminho completo pode retornar [] mesmo quando o produto
+  // existe. Ex.: /search/mesa-de-jantar-dandara => [], /search/dandara =>
+  // produto cujo linkText é exatamente "mesa-de-jantar-dandara".
+  // Usamos o último termo significativo apenas para DESCOBRIR candidatos;
+  // nunca classificamos sem validar o linkText ou a referência.
+  const canonicalSlug = withoutRef || slug;
+  const ignoredTerms = new Set(["de", "da", "do", "das", "dos", "e", "the", "of", "la", "el"]);
+  const tokens = canonicalSlug.split("-").filter(token => token.length >= 3 && !ignoredTerms.has(token));
+  const searchTerm = tokens[tokens.length - 1] || "";
+  const queries = [...new Set([slug, ...(withoutRef ? [withoutRef] : []), ...(searchTerm && searchTerm !== slug && searchTerm !== withoutRef ? [searchTerm] : [])])];
   let product: CatalogProduct | null = null;
-  try {
-    const url = `${catalogHosts[store]}/api/catalog_system/pub/products/search/${encodeURIComponent(slug)}/p`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(7000), headers: { Accept: "application/json" } });
-    if (response.ok) {
-      const json: unknown = await response.json();
-      if (Array.isArray(json)) {
-        const exact = json.filter((entry) => entry && typeof entry === "object" &&
-          normalizeProduct(String(entry.linkText || "")) === slug);
-        if (exact.length === 1) {
-          const entry = exact[0];
-          const categories = Array.isArray(entry.categories) ? entry.categories : [];
-          const path = String(categories[0] || "").split("/").filter(Boolean);
-          const root = normalizeProduct(path[0] || "");
-          const area = ["area-interna", "indoor-area", "zona-interior"].includes(root)
-            ? "Área Interna" : ["area-externa", "outdoor-area", "zona-exterior"].includes(root)
-              ? "Área Externa" : "Não identificado";
-          product = {
-            name: String(entry.Nome?.[0] || entry.Name?.[0] || entry.productName || slug),
-            productId: String(entry.productId || ""),
-            reference: String(entry.productReference || ""),
-            area,
-            category: String(path[1] || "Não identificada"),
-            slug,
-          };
+  let reason = "Nenhum resultado compatível";
+
+  for (const query of queries) {
+    for (const host of catalogHosts[store]) {
+      try {
+        const url = `${host}/api/catalog_system/pub/products/search/${encodeURIComponent(query)}`;
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(7000),
+          headers: { Accept: "application/json" },
+          next: { revalidate: 3600 },
+        });
+        if (!response.ok) { reason = `HTTP ${response.status} (${host})`; continue; }
+        const json: unknown = await response.json();
+        if (!Array.isArray(json)) { reason = `Resposta inválida (${host})`; continue; }
+        const entries = json.filter((entry): entry is VtexEntry => !!entry && typeof entry === "object");
+        const exact = entries.filter(entry => normalizeProduct(String(entry.linkText || "")) === slug);
+        let matched = exact.length === 1 ? exact[0] : undefined;
+        // Para URL com referência, o produto pode estar cadastrado com slug
+        // canônico sem o sufixo. A referência precisa ser confirmada.
+        if (!matched && ref) {
+          const byRef = entries.filter(entry => referenceMatches(entry, ref));
+          if (byRef.length === 1) matched = byRef[0];
         }
+        // Mesmo quando a busca usa só o último termo ("dandara"), a
+        // correspondência precisa ser EXATA com o slug original. Para URLs
+        // com referência, exigimos também a referência correspondente.
+        if (!matched) {
+          const canonical = entries.filter(entry => normalizeProduct(String(entry.linkText || "")) === canonicalSlug);
+          if (canonical.length === 1 && (!ref || referenceMatches(canonical[0], ref))) matched = canonical[0];
+        }
+        if (matched) {
+          product = catalogProductFromEntry(matched);
+          if (product) break;
+          reason = "Produto encontrado sem hierarquia de categoria válida";
+        } else reason = `Nenhuma correspondência exata ou referência confirmada (${query})`;
+      } catch (error) {
+        reason = error instanceof Error ? error.message : "Erro de rede";
       }
     }
-  } catch (error) {
-    console.warn("Catálogo VTEX indisponível para", store, slug, error);
+    if (product) break;
   }
-  catalogCache.set(key, { product, expires: Date.now() + (product ? 3600000 : 300000) });
-  if (catalogCache.size > 5000) catalogCache.clear();
+  lookupDiagnostics.set(key, product ? "resolvido" : reason);
+  catalogCache.set(key, { product, expires: Date.now() + (product ? 3600000 : 60000) });
+  if (catalogCache.size > 10000) catalogCache.clear();
+  if (lookupDiagnostics.size > 10000) lookupDiagnostics.clear();
   return product;
 }
 
 async function resolveCatalog(store: Store, rows: ReportRow[]) {
-  const slugs = [...new Set(rows.map((r) => pdpSlug(r.dimensions[2] || "")).filter(Boolean))];
+  const slugs = [...new Set(rows.map(r => pdpSlug(r.dimensions[2] || "")).filter(Boolean))];
   const resolved = new Map<string, CatalogProduct>();
-  // Limite defensivo de consultas por requisição; o restante permanece não identificado.
-  const MAX_LOOKUPS = 200;
-  const selected = slugs.slice(0, MAX_LOOKUPS);
   let index = 0;
-  await Promise.all(Array.from({ length: Math.min(8, selected.length) }, async () => {
-    while (index < selected.length) {
-      const slug = selected[index++];
+  await Promise.all(Array.from({ length: Math.min(12, slugs.length) }, async () => {
+    while (index < slugs.length) {
+      const slug = slugs[index++];
       const product = await catalogBySlug(store, slug);
       if (product) resolved.set(slug, product);
     }
   }));
-  return { resolved, limited: slugs.length > MAX_LOOKUPS };
+  const missing = new Map<string, { downloads: number; pagePath: string; reason: string }>();
+  let matchedDownloads = 0;
+  let unmatchedDownloads = 0;
+  for (const row of rows) {
+    const pagePath = row.dimensions[2] || "";
+    const slug = pdpSlug(pagePath);
+    const count = row.metrics[0] || 0;
+    if (slug && resolved.has(slug)) { matchedDownloads += count; continue; }
+    unmatchedDownloads += count;
+    const key = slug || `(sem slug) ${pagePath}`;
+    const existing = missing.get(key);
+    if (existing) existing.downloads += count;
+    else missing.set(key, {
+      downloads: count,
+      pagePath,
+      reason: slug ? lookupDiagnostics.get(`${store}:${slug}`) || "Sem correspondência" : "URL não é PDP",
+    });
+  }
+  console.info("Diagnóstico VTEX downloads", JSON.stringify({
+    store,
+    slugsEncontrados: slugs.length,
+    slugsResolvidos: resolved.size,
+    downloadsClassificados: matchedDownloads,
+    downloadsNaoClassificados: unmatchedDownloads,
+    principaisPendencias: [...missing.entries()].map(([slug, value]) => ({ slug, ...value }))
+      .sort((a, b) => b.downloads - a.downloads).slice(0, 25),
+  }, null, 2));
+  return { resolved, limited: false };
 }
 
 function summarizeDownloads(rows: ReportRow[], catalog: Map<string, CatalogProduct>, limited: boolean) {
