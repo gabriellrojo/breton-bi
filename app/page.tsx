@@ -3563,57 +3563,6 @@ export default function Home() {
 
           </div>
 
-          <div className="metrics">
-            <Card label="Downloads de arquivos" value={data.downloads?.totals.total || 0} />
-            <Card label="Downloads 3D" value={data.downloads?.totals.d3 || 0} />
-            <Card label="Downloads 2D" value={data.downloads?.totals.d2 || 0} />
-            <Card label="Fichas comerciais" value={data.downloads?.totals.ficha || 0} />
-          </div>
-          <Section title="Downloads por área" subtitle={`Totais de Área Interna e Área Externa — ${currentStore.label}`}>
-            {table(
-              ["Área", "Total de downloads", "3D", "2D", "Ficha comercial"],
-              ["Área Interna", "Área Externa"].map((area) => {
-                const row = (data.downloads?.areas || []).find((item) => item.area === area);
-                return [area, row?.total || 0, row?.d3 || 0, row?.d2 || 0, row?.ficha || 0];
-              }),
-            )}
-          </Section>
-          <Section title="Downloads por categoria" subtitle="Totais por categoria de produto, independentemente da área">
-            {table(
-              ["Categoria", "Total de downloads", "3D", "2D", "Ficha comercial"],
-              (() => {
-                const grouped = new Map<string, DownloadBreakdown>();
-                for (const row of data.downloads?.categories || []) {
-                  const key = row.category;
-                  const previous = grouped.get(key) || { total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
-                  grouped.set(key, {
-                    total: previous.total + row.total,
-                    d3: previous.d3 + row.d3,
-                    d2: previous.d2 + row.d2,
-                    ficha: previous.ficha + row.ficha,
-                    outros: previous.outros + row.outros,
-                  });
-                }
-                return [...grouped.entries()]
-                  .sort((a, b) => b[1].total - a[1].total)
-                  .map(([category, row]) => [category, row.total, row.d3, row.d2, row.ficha]);
-              })(),
-            )}
-          </Section>
-          <Section title="Produtos com mais downloads" subtitle="Ranking por produto, como no relatório anterior">
-            {table(
-              ["Produto", "Total", "3D", "2D", "Ficha comercial"],
-              (data.downloads?.products || []).filter((p) => p.total > 0).slice(0, 100).map((p) => [p.name, p.total, p.d3, p.d2, p.ficha]),
-            )}
-            <p className="footnote">Produtos sem correspondência segura na VTEX não são classificados por aproximação.</p>
-          </Section>
-          <Section title="Arquivos mais baixados" subtitle="Ranking de arquivos registrados pelo GA4">
-            {table(
-              ["Arquivo", "Tipo", "Downloads", "Produto", "Categoria", "Página de origem"],
-              (data.downloads?.files || []).slice(0, 100).map((f) => [f.name, f.category === "ficha" ? "Ficha comercial" : f.category.toUpperCase(), f.count, f.product || "Não identificado", f.productCategory || "Não identificada", f.pagePath]),
-            )}
-            <p className="footnote">Não vinculados a um produto: {data.downloads?.unmatched || 0} eventos. Outros tipos: {data.downloads?.totals.outros || 0}. {data.downloads?.limited ? "A consulta ao catálogo foi limitada a 200 produtos distintos neste carregamento. " : ""}Os eventos file_download indicam cliques rastreados, não a confirmação de conclusão do download.</p>
-          </Section>
           <Section
 
             title="Ranking de produtos"
@@ -3787,6 +3736,59 @@ export default function Home() {
             </p>
 
           </Section>
+
+          <div className="metrics">
+            <Card label="Downloads de arquivos" value={data.downloads?.totals.total || 0} />
+            <Card label="Downloads 3D" value={data.downloads?.totals.d3 || 0} />
+            <Card label="Downloads 2D" value={data.downloads?.totals.d2 || 0} />
+            <Card label="Fichas comerciais" value={data.downloads?.totals.ficha || 0} />
+          </div>
+          <Section title="Downloads por área" subtitle={`Totais de Área Interna e Área Externa — ${currentStore.label}`}>
+            {table(
+              ["Área", "Total de downloads", "3D", "2D", "Ficha comercial"],
+              ["Área Interna", "Área Externa"].map((area) => {
+                const row = (data.downloads?.areas || []).find((item) => item.area === area);
+                return [area, row?.total || 0, row?.d3 || 0, row?.d2 || 0, row?.ficha || 0];
+              }),
+            )}
+          </Section>
+          <Section title="Downloads por categoria" subtitle="Totais por categoria de produto, independentemente da área">
+            {table(
+              ["Categoria", "Total de downloads", "3D", "2D", "Ficha comercial"],
+              (() => {
+                const grouped = new Map<string, DownloadBreakdown>();
+                for (const row of data.downloads?.categories || []) {
+                  const key = row.category;
+                  const previous = grouped.get(key) || { total: 0, d3: 0, d2: 0, ficha: 0, outros: 0 };
+                  grouped.set(key, {
+                    total: previous.total + row.total,
+                    d3: previous.d3 + row.d3,
+                    d2: previous.d2 + row.d2,
+                    ficha: previous.ficha + row.ficha,
+                    outros: previous.outros + row.outros,
+                  });
+                }
+                return [...grouped.entries()]
+                  .sort((a, b) => b[1].total - a[1].total)
+                  .map(([category, row]) => [category, row.total, row.d3, row.d2, row.ficha]);
+              })(),
+            )}
+          </Section>
+          <Section title="Produtos com mais downloads" subtitle="Ranking por produto, como no relatório anterior">
+            {table(
+              ["Produto", "Total", "3D", "2D", "Ficha comercial"],
+              (data.downloads?.products || []).filter((p) => p.total > 0).slice(0, 100).map((p) => [p.name, p.total, p.d3, p.d2, p.ficha]),
+            )}
+            <p className="footnote">Produtos sem correspondência segura na VTEX não são classificados por aproximação.</p>
+          </Section>
+          <Section title="Arquivos mais baixados" subtitle="Ranking de arquivos registrados pelo GA4">
+            {table(
+              ["Arquivo", "Tipo", "Downloads", "Produto", "Categoria", "Página de origem"],
+              (data.downloads?.files || []).slice(0, 100).map((f) => [f.name, f.category === "ficha" ? "Ficha comercial" : f.category.toUpperCase(), f.count, f.product || "Não identificado", f.productCategory || "Não identificada", f.pagePath]),
+            )}
+            <p className="footnote">Não vinculados a um produto: {data.downloads?.unmatched || 0} eventos. Outros tipos: {data.downloads?.totals.outros || 0}. {data.downloads?.limited ? "" : ""}Os eventos file_download indicam cliques rastreados, não a confirmação de conclusão do download.</p>
+          </Section>
+
 
         </>
 
